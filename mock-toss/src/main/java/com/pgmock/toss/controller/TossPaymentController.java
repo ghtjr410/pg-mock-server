@@ -7,12 +7,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/v1/payments")
 public class TossPaymentController {
 
     private final PaymentStore paymentStore;
+    private final ConcurrentHashMap<String, Map<String, Object>> idempotencyCache = new ConcurrentHashMap<>();
 
     public TossPaymentController(PaymentStore paymentStore) {
         this.paymentStore = paymentStore;
@@ -22,7 +24,10 @@ public class TossPaymentController {
      * 결제 승인 (confirm)
      */
     @PostMapping("/confirm")
-    public ResponseEntity<?> confirm(@RequestBody ConfirmRequest request) {
+    public ResponseEntity<?> confirm(
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody ConfirmRequest request) {
+
         if (request.paymentKey() == null || request.orderId() == null || request.amount() <= 0) {
             return ResponseEntity.badRequest().body(Map.of(
                     "code", "INVALID_REQUEST",
@@ -30,10 +35,32 @@ public class TossPaymentController {
             ));
         }
 
-        // 기존 결제건 조회 (이미 confirm된 건)
+        // 멱등키가 있으면 캐시된 응답 반환
+        if (idempotencyKey != null) {
+            Map<String, Object> cached = idempotencyCache.get(idempotencyKey);
+            if (cached != null) {
+                return ResponseEntity.ok(cached);
+            }
+        }
+
+        // 기존 결제건 조회 — 금액 불일치 검증
         Payment existing = paymentStore.findByPaymentKey(request.paymentKey());
-        if (existing != null && existing.isDone()) {
-            return ResponseEntity.ok(toResponse(existing));
+        if (existing != null) {
+            if (existing.getAmount() != request.amount()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "code", "AMOUNT_MISMATCH",
+                        "message", "결제 금액이 일치하지 않습니다."
+                ));
+            }
+            if (!existing.getOrderId().equals(request.orderId())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "code", "INVALID_REQUEST",
+                        "message", "주문번호가 일치하지 않습니다."
+                ));
+            }
+            if (existing.isDone()) {
+                return ResponseEntity.ok(toResponse(existing));
+            }
         }
 
         // 새 결제건 생성 및 승인
@@ -41,7 +68,14 @@ public class TossPaymentController {
         payment.approve();
         paymentStore.save(payment);
 
-        return ResponseEntity.ok(toResponse(payment));
+        Map<String, Object> response = toResponse(payment);
+
+        // 멱등키 캐싱
+        if (idempotencyKey != null) {
+            idempotencyCache.put(idempotencyKey, response);
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     /**
