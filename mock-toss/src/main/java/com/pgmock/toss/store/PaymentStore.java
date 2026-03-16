@@ -17,4 +17,11 @@ public class PaymentStore {
     public Payment findByPaymentKey(String paymentKey) {
         return store.get(paymentKey);
     }
+
+    public Payment findByOrderId(String orderId) {
+        return store.values().stream()
+                .filter(p -> p.getOrderId().equals(orderId))
+                .findFirst()
+                .orElse(null);
+    }
 }

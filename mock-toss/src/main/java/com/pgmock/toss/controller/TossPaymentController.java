@@ -16,7 +16,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TossPaymentController {
 
     // confirm 에러 트리거 — orderId에 키워드 포함 시 해당 에러 반환
-    // 재시도 불가 (클라이언트 오류)
     private static final Map<String, ErrorSpec> CONFIRM_ERROR_TRIGGERS = new LinkedHashMap<>();
     // cancel 에러 트리거
     private static final Map<String, ErrorSpec> CANCEL_ERROR_TRIGGERS = new LinkedHashMap<>();
@@ -58,9 +57,6 @@ public class TossPaymentController {
 
     /**
      * 결제 승인 (confirm)
-     *
-     * 에러 시뮬레이션: orderId에 특정 키워드를 포함시키면 해당 에러 반환.
-     * 키워드 목록은 CONFIRM_ERROR_TRIGGERS 참조.
      */
     @PostMapping("/confirm")
     public ResponseEntity<?> confirm(
@@ -68,35 +64,28 @@ public class TossPaymentController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody ConfirmRequest request) {
 
-        // Authorization 검증
         ResponseEntity<?> authError = validateAuthorization(authorization);
-        if (authError != null) {
-            return authError;
-        }
+        if (authError != null) return authError;
 
         if (request.paymentKey() == null || request.orderId() == null || request.amount() <= 0) {
             return ResponseEntity.badRequest().body(errorBody(
                     "INVALID_REQUEST", "paymentKey, orderId, amount는 필수입니다."));
         }
 
-        // 멱등키가 있으면 캐시된 응답 반환
+        // 멱등키 캐시
         if (idempotencyKey != null) {
             Map<String, Object> cached = idempotencyCache.get(idempotencyKey);
-            if (cached != null) {
-                return ResponseEntity.ok(cached);
-            }
+            if (cached != null) return ResponseEntity.ok(cached);
         }
 
-        // 에러 트리거 체크 (orderId 기반)
+        // 에러 트리거
         ResponseEntity<?> triggered = checkErrorTrigger(request.orderId(), CONFIRM_ERROR_TRIGGERS);
-        if (triggered != null) {
-            return triggered;
-        }
+        if (triggered != null) return triggered;
 
-        // 기존 결제건 조회 — 금액/주문번호 불일치 검증
+        // 기존 결제건 검증
         Payment existing = paymentStore.findByPaymentKey(request.paymentKey());
         if (existing != null) {
-            if (existing.getAmount() != request.amount()) {
+            if (existing.getTotalAmount() != request.amount()) {
                 return ResponseEntity.badRequest().body(errorBody(
                         "AMOUNT_MISMATCH", "결제 금액이 일치하지 않습니다."));
             }
@@ -104,28 +93,21 @@ public class TossPaymentController {
                 return ResponseEntity.badRequest().body(errorBody(
                         "INVALID_REQUEST", "주문번호가 일치하지 않습니다."));
             }
-            if (existing.isDone()) {
-                return ResponseEntity.ok(toResponse(existing));
-            }
+            if (existing.isDone()) return ResponseEntity.ok(toResponse(existing));
         }
 
-        // 새 결제건 생성 및 승인
         Payment payment = new Payment(request.paymentKey(), request.orderId(), request.amount());
         payment.approve();
         paymentStore.save(payment);
 
         Map<String, Object> response = toResponse(payment);
-
-        // 멱등키 캐싱
-        if (idempotencyKey != null) {
-            idempotencyCache.put(idempotencyKey, response);
-        }
+        if (idempotencyKey != null) idempotencyCache.put(idempotencyKey, response);
 
         return ResponseEntity.ok(response);
     }
 
     /**
-     * 결제 조회
+     * paymentKey로 결제 조회
      */
     @GetMapping("/{paymentKey}")
     public ResponseEntity<?> getPayment(
@@ -133,20 +115,37 @@ public class TossPaymentController {
             @PathVariable String paymentKey) {
 
         ResponseEntity<?> authError = validateAuthorization(authorization);
-        if (authError != null) {
-            return authError;
-        }
+        if (authError != null) return authError;
 
         Payment payment = paymentStore.findByPaymentKey(paymentKey);
         if (payment == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(
-                    "NOT_FOUND_PAYMENT", "존재하지 않는 결제입니다."));
+                    "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."));
         }
         return ResponseEntity.ok(toResponse(payment));
     }
 
     /**
-     * 결제 취소
+     * orderId로 결제 조회
+     */
+    @GetMapping("/orders/{orderId}")
+    public ResponseEntity<?> getPaymentByOrderId(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable String orderId) {
+
+        ResponseEntity<?> authError = validateAuthorization(authorization);
+        if (authError != null) return authError;
+
+        Payment payment = paymentStore.findByOrderId(orderId);
+        if (payment == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(
+                    "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."));
+        }
+        return ResponseEntity.ok(toResponse(payment));
+    }
+
+    /**
+     * 결제 취소 (전액/부분)
      */
     @PostMapping("/{paymentKey}/cancel")
     public ResponseEntity<?> cancel(
@@ -155,34 +154,38 @@ public class TossPaymentController {
             @RequestBody CancelRequest request) {
 
         ResponseEntity<?> authError = validateAuthorization(authorization);
-        if (authError != null) {
-            return authError;
-        }
+        if (authError != null) return authError;
 
         Payment payment = paymentStore.findByPaymentKey(paymentKey);
         if (payment == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(
-                    "NOT_FOUND_PAYMENT", "존재하지 않는 결제입니다."));
+                    "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."));
         }
-        if (!payment.isDone()) {
+        if (!payment.isCancelable()) {
             return ResponseEntity.badRequest().body(errorBody(
                     "ALREADY_CANCELED_PAYMENT", "이미 취소된 결제 입니다"));
         }
 
-        // 취소 에러 트리거 (cancelReason 기반)
-        ResponseEntity<?> cancelTriggered = checkErrorTrigger(request.cancelReason(), CANCEL_ERROR_TRIGGERS);
-        if (cancelTriggered != null) {
-            return cancelTriggered;
+        // 부분취소 금액 검증
+        if (request.cancelAmount() != null && request.cancelAmount() > payment.getBalanceAmount()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorBody(
+                    "NOT_CANCELABLE_AMOUNT", "취소 할 수 없는 금액입니다"));
         }
 
-        payment.cancel(request.cancelReason());
+        // 취소 에러 트리거
+        ResponseEntity<?> cancelTriggered = checkErrorTrigger(request.cancelReason(), CANCEL_ERROR_TRIGGERS);
+        if (cancelTriggered != null) return cancelTriggered;
+
+        payment.cancel(request.cancelReason(), request.cancelAmount());
         return ResponseEntity.ok(toResponse(payment));
     }
+
+    // === private helpers ===
 
     private ResponseEntity<?> validateAuthorization(String authorization) {
         if (authorization == null || !authorization.startsWith("Basic ")) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorBody(
-                    "UNAUTHORIZED_KEY", "인증 키가 유효하지 않습니다. Basic 인증을 확인해주세요."));
+                    "UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키 혹은 클라이언트 키 입니다."));
         }
         try {
             String decoded = new String(Base64.getDecoder().decode(authorization.substring(6)));
@@ -215,25 +218,77 @@ public class TossPaymentController {
 
     private Map<String, Object> toResponse(Payment p) {
         var map = new LinkedHashMap<String, Object>();
+        map.put("version", p.getVersion());
         map.put("paymentKey", p.getPaymentKey());
+        map.put("type", p.getType());
         map.put("orderId", p.getOrderId());
-        map.put("status", p.getStatus());
-        map.put("totalAmount", p.getAmount());
+        map.put("orderName", p.getOrderName());
+        map.put("mId", p.getMId());
+        map.put("currency", p.getCurrency());
         map.put("method", p.getMethod());
+        map.put("totalAmount", p.getTotalAmount());
+        map.put("balanceAmount", p.getBalanceAmount());
+        map.put("suppliedAmount", p.getSuppliedAmount());
+        map.put("vat", p.getVat());
+        map.put("status", p.getStatus());
+        map.put("requestedAt", p.getRequestedAt().toString());
         map.put("approvedAt", p.getApprovedAt() != null ? p.getApprovedAt().toString() : null);
-        map.put("card", Map.of(
-                "issuerCode", p.getCard().issuerCode(),
-                "number", p.getCard().number(),
-                "approveNo", p.getCard().approveNo()
-        ));
-        if (p.getCancelReason() != null) {
-            map.put("cancelReason", p.getCancelReason());
+        map.put("useEscrow", p.isUseEscrow());
+        map.put("lastTransactionKey", p.getLastTransactionKey());
+        map.put("country", p.getCountry());
+        map.put("isPartialCancelable", p.isPartialCancelable());
+
+        // card
+        Payment.Card c = p.getCard();
+        var cardMap = new LinkedHashMap<String, Object>();
+        cardMap.put("issuerCode", c.issuerCode());
+        cardMap.put("acquirerCode", c.acquirerCode());
+        cardMap.put("number", c.number());
+        cardMap.put("installmentPlanMonths", c.installmentPlanMonths());
+        cardMap.put("isInterestFree", c.isInterestFree());
+        cardMap.put("interestPayer", c.interestPayer());
+        cardMap.put("approveNo", c.approveNo());
+        cardMap.put("useCardPoint", false);
+        cardMap.put("cardType", c.cardType());
+        cardMap.put("ownerType", c.ownerType());
+        cardMap.put("acquireStatus", c.acquireStatus());
+        cardMap.put("amount", c.amount());
+        map.put("card", cardMap);
+
+        // cancels
+        if (!p.getCancels().isEmpty()) {
+            var cancelList = p.getCancels().stream().map(cancel -> {
+                var cm = new LinkedHashMap<String, Object>();
+                cm.put("cancelAmount", cancel.cancelAmount());
+                cm.put("cancelReason", cancel.cancelReason());
+                cm.put("canceledAt", cancel.canceledAt().toString());
+                cm.put("transactionKey", cancel.transactionKey());
+                cm.put("refundableAmount", cancel.refundableAmount());
+                return (Map<String, Object>) cm;
+            }).toList();
+            map.put("cancels", cancelList);
+        } else {
+            map.put("cancels", null);
         }
+
+        // nullable fields
+        map.put("virtualAccount", null);
+        map.put("transfer", null);
+        map.put("mobilePhone", null);
+        map.put("giftCertificate", null);
+        map.put("cashReceipt", null);
+        map.put("cashReceipts", null);
+        map.put("discount", null);
+        map.put("easyPay", null);
+        map.put("failure", null);
+        map.put("receipt", null);
+        map.put("checkout", null);
+
         return map;
     }
 
     public record ConfirmRequest(String paymentKey, String orderId, long amount) {}
-    public record CancelRequest(String cancelReason) {}
+    public record CancelRequest(String cancelReason, Long cancelAmount) {}
 
     private record ErrorSpec(int httpStatus, String code, String message) {}
 }
