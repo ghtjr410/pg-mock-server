@@ -1,4 +1,6 @@
 CONTEXT.md
+RESILIENCE4J_GUIDE.md
+MULTI_PG_FALLBACK.md
 .claude/
 .idea/
 
