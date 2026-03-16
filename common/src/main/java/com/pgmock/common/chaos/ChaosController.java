@@ -29,8 +29,15 @@ public class ChaosController {
     }
 
     @PutMapping("/mode")
-    public Map<String, Object> setMode(@RequestParam ChaosMode mode) {
+    public Map<String, Object> setMode(
+            @RequestParam ChaosMode mode,
+            @RequestParam(required = false) Integer slowMinMs,
+            @RequestParam(required = false) Integer slowMaxMs,
+            @RequestParam(required = false) Integer partialFailureRate) {
         properties.setMode(mode);
-        return Map.of("mode", properties.getMode());
+        if (slowMinMs != null) properties.setSlowMinMs(slowMinMs);
+        if (slowMaxMs != null) properties.setSlowMaxMs(slowMaxMs);
+        if (partialFailureRate != null) properties.setPartialFailureRate(partialFailureRate);
+        return getMode();
     }
 }
