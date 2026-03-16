@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -16,6 +17,19 @@ import java.util.concurrent.ThreadLocalRandom;
 public class ChaosInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(ChaosInterceptor.class);
+
+    // PARTIAL_FAILURE 에러코드 풀 — 재시도 가능 70%, 불가 30%
+    private static final List<ErrorSpec> RETRYABLE_ERRORS = List.of(
+            new ErrorSpec(500, "FAILED_INTERNAL_SYSTEM_PROCESSING", "내부 시스템 처리 작업이 실패했습니다"),
+            new ErrorSpec(400, "PROVIDER_ERROR", "일시적인 오류가 발생했습니다"),
+            new ErrorSpec(500, "UNKNOWN_PAYMENT_ERROR", "결제에 실패했어요")
+    );
+    private static final List<ErrorSpec> NON_RETRYABLE_ERRORS = List.of(
+            new ErrorSpec(403, "REJECT_CARD_COMPANY", "결제 승인이 거절되었습니다"),
+            new ErrorSpec(403, "REJECT_CARD_PAYMENT", "한도초과 혹은 잔액부족"),
+            new ErrorSpec(403, "FORBIDDEN_REQUEST", "허용되지 않은 요청입니다")
+    );
+
     private final ChaosProperties properties;
 
     public ChaosInterceptor(ChaosProperties properties) {
@@ -52,23 +66,35 @@ public class ChaosInterceptor implements HandlerInterceptor {
                 response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
                 response.setContentType("application/json");
                 response.getWriter().write("""
-                        {"code":"PROVIDER_ERROR","message":"PG 내부 오류 (카오스 모드)"}""");
+                        {"code":"FAILED_INTERNAL_SYSTEM_PROCESSING","message":"내부 시스템 처리 작업이 실패했습니다"}""");
                 return false;
             }
             case PARTIAL_FAILURE -> {
                 int roll = ThreadLocalRandom.current().nextInt(100);
                 if (roll < properties.getPartialFailureRate()) {
-                    log.info("[CHAOS:PARTIAL_FAILURE] {}% 확률 실패 (roll={})", properties.getPartialFailureRate(), roll);
-                    response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+                    // 재시도 가능 70%, 불가 30%
+                    ErrorSpec error = pickPartialFailureError();
+                    log.info("[CHAOS:PARTIAL_FAILURE] {}% 확률 실패 (roll={}, code={})",
+                            properties.getPartialFailureRate(), roll, error.code());
+                    response.setStatus(error.httpStatus());
                     response.setContentType("application/json");
-                    response.getWriter().write("""
-                            {"code":"PROVIDER_ERROR","message":"간헐적 오류 (카오스 모드)"}""");
+                    response.getWriter().write(
+                            "{\"code\":\"" + error.code() + "\",\"message\":\"" + error.message() + "\"}");
                     return false;
                 }
                 return true;
             }
         }
         return true;
+    }
+
+    private ErrorSpec pickPartialFailureError() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        if (random.nextInt(100) < 70) {
+            return RETRYABLE_ERRORS.get(random.nextInt(RETRYABLE_ERRORS.size()));
+        } else {
+            return NON_RETRYABLE_ERRORS.get(random.nextInt(NON_RETRYABLE_ERRORS.size()));
+        }
     }
 
     private ChaosMode resolveMode(HttpServletRequest request) {
@@ -81,4 +107,6 @@ public class ChaosInterceptor implements HandlerInterceptor {
         }
         return properties.getMode();
     }
+
+    private record ErrorSpec(int httpStatus, String code, String message) {}
 }
