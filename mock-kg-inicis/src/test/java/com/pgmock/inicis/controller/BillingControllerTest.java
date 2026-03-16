@@ -86,6 +86,35 @@ class BillingControllerTest {
     }
 
     @Test
+    void 빌링결제_에러트리거_한도초과() throws Exception {
+        mockMvc.perform(post("/api/v1/billing/pay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "billingKey":"blk_lim","orderId":"ORDER-limit-001",
+                                  "amount":50000,"productName":"구독","buyerName":"테스트"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultCode").value("V110"))
+                .andExpect(jsonPath("$.resultMsg").value("한도초과"));
+    }
+
+    @Test
+    void 빌링결제_에러트리거_시스템오류() throws Exception {
+        mockMvc.perform(post("/api/v1/billing/pay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "billingKey":"blk_sys","orderId":"ORDER-syserr-001",
+                                  "amount":50000,"productName":"구독","buyerName":"테스트"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultCode").value("E001"));
+    }
+
+    @Test
     void 거래조회_없는건() throws Exception {
         mockMvc.perform(post("/api/v1/billing/inquiry")
                         .contentType(MediaType.APPLICATION_JSON)

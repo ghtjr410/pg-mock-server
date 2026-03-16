@@ -7,6 +7,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Base64;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -19,9 +21,12 @@ class TossPaymentControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
+    private static final String AUTH_HEADER = "Basic " + Base64.getEncoder().encodeToString("test_sk_xxxx:".getBytes());
+
     @Test
     void confirm_정상승인() throws Exception {
         mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"paymentKey":"tpk_test1","orderId":"ORDER-001","amount":50000}
@@ -34,8 +39,20 @@ class TossPaymentControllerTest {
     }
 
     @Test
+    void confirm_인증없으면_401() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"paymentKey":"tpk_noauth","orderId":"ORDER-NA","amount":1000}
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED_KEY"));
+    }
+
+    @Test
     void confirm_필수값누락시_400() throws Exception {
         mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"paymentKey":null,"orderId":null,"amount":0}
@@ -46,15 +63,15 @@ class TossPaymentControllerTest {
 
     @Test
     void confirm_금액불일치시_400() throws Exception {
-        // 먼저 정상 승인
         mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"paymentKey":"tpk_mismatch","orderId":"ORDER-M","amount":10000}
                         """));
 
-        // 같은 paymentKey로 다른 금액 요청
         mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"paymentKey":"tpk_mismatch","orderId":"ORDER-M","amount":99999}
@@ -68,18 +85,19 @@ class TossPaymentControllerTest {
         String idempotencyKey = "idem-key-001";
 
         mockMvc.perform(post("/v1/payments/confirm")
-                .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", AUTH_HEADER)
                 .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"paymentKey":"tpk_idem","orderId":"ORDER-I","amount":30000}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentKey").value("tpk_idem"));
 
-        // 같은 멱등키로 재요청 — 동일 응답
         mockMvc.perform(post("/v1/payments/confirm")
-                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", AUTH_HEADER)
                         .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"paymentKey":"tpk_idem","orderId":"ORDER-I","amount":30000}
                                 """))
@@ -88,21 +106,48 @@ class TossPaymentControllerTest {
     }
 
     @Test
+    void confirm_에러트리거_REJECT() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"paymentKey":"tpk_rej","orderId":"ORDER-reject-001","amount":5000}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("REJECT_CARD_COMPANY"));
+    }
+
+    @Test
+    void confirm_에러트리거_PROVIDER_ERROR() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"paymentKey":"tpk_pe","orderId":"ORDER-provider_error-001","amount":5000}
+                                """))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("PROVIDER_ERROR"));
+    }
+
+    @Test
     void 결제조회_존재하는건() throws Exception {
         mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"paymentKey":"tpk_query","orderId":"ORDER-Q","amount":5000}
                         """));
 
-        mockMvc.perform(get("/v1/payments/tpk_query"))
+        mockMvc.perform(get("/v1/payments/tpk_query")
+                        .header("Authorization", AUTH_HEADER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DONE"));
     }
 
     @Test
     void 결제조회_없는건_404() throws Exception {
-        mockMvc.perform(get("/v1/payments/nonexistent"))
+        mockMvc.perform(get("/v1/payments/nonexistent")
+                        .header("Authorization", AUTH_HEADER))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND_PAYMENT"));
     }
@@ -110,12 +155,14 @@ class TossPaymentControllerTest {
     @Test
     void 결제취소_정상() throws Exception {
         mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"paymentKey":"tpk_cancel","orderId":"ORDER-C","amount":7000}
                         """));
 
         mockMvc.perform(post("/v1/payments/tpk_cancel/cancel")
+                        .header("Authorization", AUTH_HEADER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"cancelReason":"고객 요청"}
