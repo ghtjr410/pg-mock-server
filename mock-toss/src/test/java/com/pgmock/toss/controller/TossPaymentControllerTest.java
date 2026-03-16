@@ -106,15 +106,27 @@ class TossPaymentControllerTest {
     }
 
     @Test
-    void confirm_에러트리거_REJECT() throws Exception {
+    void confirm_에러트리거_REJECT_CARD_COMPANY() throws Exception {
         mockMvc.perform(post("/v1/payments/confirm")
                         .header("Authorization", AUTH_HEADER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"paymentKey":"tpk_rej","orderId":"ORDER-reject-001","amount":5000}
+                                {"paymentKey":"tpk_rej","orderId":"ORDER-reject_company-001","amount":5000}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("REJECT_CARD_COMPANY"));
+    }
+
+    @Test
+    void confirm_에러트리거_EXCEED_MAX_AMOUNT() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"paymentKey":"tpk_exc","orderId":"ORDER-exceed-001","amount":5000}
                                 """))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REJECT_CARD_COMPANY"));
+                .andExpect(jsonPath("$.code").value("EXCEED_MAX_AMOUNT"));
     }
 
     @Test
@@ -125,8 +137,39 @@ class TossPaymentControllerTest {
                         .content("""
                                 {"paymentKey":"tpk_pe","orderId":"ORDER-provider_error-001","amount":5000}
                                 """))
-                .andExpect(status().isInternalServerError())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("PROVIDER_ERROR"));
+    }
+
+    @Test
+    void confirm_에러트리거_SYSTEM_ERROR_500() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                        .header("Authorization", AUTH_HEADER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"paymentKey":"tpk_se","orderId":"ORDER-system_error-001","amount":5000}
+                                """))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("FAILED_INTERNAL_SYSTEM_PROCESSING"));
+    }
+
+    @Test
+    void 결제취소_에러트리거_NOT_CANCELABLE() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"paymentKey":"tpk_nc","orderId":"ORDER-NC","amount":9000}
+                        """));
+
+        mockMvc.perform(post("/v1/payments/tpk_nc/cancel")
+                        .header("Authorization", AUTH_HEADER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"cancelReason":"not_cancelable 사유"}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("NOT_CANCELABLE_PAYMENT"));
     }
 
     @Test
