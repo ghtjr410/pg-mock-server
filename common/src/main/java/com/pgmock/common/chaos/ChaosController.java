@@ -20,12 +20,13 @@ public class ChaosController {
 
     @GetMapping("/mode")
     public Map<String, Object> getMode() {
-        return Map.of(
-                "mode", properties.getMode(),
-                "slowMinMs", properties.getSlowMinMs(),
-                "slowMaxMs", properties.getSlowMaxMs(),
-                "partialFailureRate", properties.getPartialFailureRate()
-        );
+        var map = new java.util.LinkedHashMap<String, Object>();
+        map.put("mode", properties.getMode());
+        map.put("slowMinMs", properties.getSlowMinMs());
+        map.put("slowMaxMs", properties.getSlowMaxMs());
+        map.put("partialFailureRate", properties.getPartialFailureRate());
+        map.put("affectReadApis", properties.isAffectReadApis());
+        return map;
     }
 
     @PutMapping("/mode")
@@ -33,11 +34,13 @@ public class ChaosController {
             @RequestParam ChaosMode mode,
             @RequestParam(required = false) Integer slowMinMs,
             @RequestParam(required = false) Integer slowMaxMs,
-            @RequestParam(required = false) Integer partialFailureRate) {
+            @RequestParam(required = false) Integer partialFailureRate,
+            @RequestParam(required = false) Boolean affectReadApis) {
         properties.setMode(mode);
         if (slowMinMs != null) properties.setSlowMinMs(slowMinMs);
         if (slowMaxMs != null) properties.setSlowMaxMs(slowMaxMs);
         if (partialFailureRate != null) properties.setPartialFailureRate(partialFailureRate);
+        if (affectReadApis != null) properties.setAffectReadApis(affectReadApis);
         return getMode();
     }
 }

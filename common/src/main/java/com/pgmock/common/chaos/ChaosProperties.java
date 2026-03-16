@@ -9,6 +9,9 @@ public class ChaosProperties {
     private int slowMinMs = 3000;
     private int slowMaxMs = 10000;
     private int partialFailureRate = 50;
+    // GET 요청(조회 API)에도 카오스를 적용할지 여부
+    // false면 GET 요청은 카오스 모드와 무관하게 항상 정상 응답
+    private boolean affectReadApis = false;
 
     public ChaosMode getMode() {
         return mode;
@@ -40,5 +43,13 @@ public class ChaosProperties {
 
     public void setPartialFailureRate(int partialFailureRate) {
         this.partialFailureRate = partialFailureRate;
+    }
+
+    public boolean isAffectReadApis() {
+        return affectReadApis;
+    }
+
+    public void setAffectReadApis(boolean affectReadApis) {
+        this.affectReadApis = affectReadApis;
     }
 }

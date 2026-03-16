@@ -43,6 +43,12 @@ public class ChaosInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // GET(조회) 요청은 기본적으로 카오스 적용하지 않음
+        // → 실무 시나리오: confirm 타임아웃 → 조회로 상태 확인
+        if ("GET".equalsIgnoreCase(request.getMethod()) && !properties.isAffectReadApis()) {
+            return true;
+        }
+
         // 헤더로 모드 오버라이드 가능
         ChaosMode mode = resolveMode(request);
 
