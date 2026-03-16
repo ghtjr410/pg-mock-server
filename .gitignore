@@ -1,3 +1,7 @@
+CONTEXT.md
+.claude/
+.idea/
+
 .gradle
 **/build/
 !**/src/**/build/
