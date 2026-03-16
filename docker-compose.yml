@@ -1,0 +1,24 @@
+services:
+  mock-toss:
+    build:
+      context: mock-toss
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      - CHAOS_MODE=NORMAL
+      - CHAOS_SLOW_MIN_MS=3000
+      - CHAOS_SLOW_MAX_MS=10000
+      - CHAOS_PARTIAL_FAILURE_RATE=50
+
+  mock-kg-inicis:
+    build:
+      context: mock-kg-inicis
+      dockerfile: Dockerfile
+    ports:
+      - "8091:8091"
+    environment:
+      - CHAOS_MODE=NORMAL
+      - CHAOS_SLOW_MIN_MS=3000
+      - CHAOS_SLOW_MAX_MS=10000
+      - CHAOS_PARTIAL_FAILURE_RATE=50
