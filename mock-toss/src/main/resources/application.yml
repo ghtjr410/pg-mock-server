@@ -1,0 +1,12 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: mock-toss
+
+chaos:
+  mode: NORMAL
+  slow-min-ms: 3000
+  slow-max-ms: 10000
+  partial-failure-rate: 50
