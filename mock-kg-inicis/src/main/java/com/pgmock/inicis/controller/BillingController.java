@@ -11,9 +11,23 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * 에러 시뮬레이션: orderId에 특정 키워드를 포함시키면 해당 에러 반환
+ * - "limit" → V110 한도초과
+ * - "expired" → V120 카드 유효기간 오류
+ * - "badcard" → V130 카드번호 오류
+ * - "syserr" → E001 시스템 오류
+ */
 @RestController
 @RequestMapping("/api/v1/billing")
 public class BillingController {
+
+    private static final Map<String, ErrorSpec> ERROR_TRIGGERS = Map.of(
+            "limit", new ErrorSpec("V110", "한도초과"),
+            "expired", new ErrorSpec("V120", "카드 유효기간 오류"),
+            "badcard", new ErrorSpec("V130", "카드번호 오류"),
+            "syserr", new ErrorSpec("E001", "시스템 오류")
+    );
 
     private final BillingPaymentStore store;
 
@@ -29,6 +43,12 @@ public class BillingController {
         if (request.billingKey() == null || request.orderId() == null || request.amount() <= 0) {
             return ResponseEntity.badRequest().body(toFailResponse(
                     request.orderId(), "E001", "필수 파라미터가 누락되었습니다."));
+        }
+
+        // 에러 트리거 체크
+        Map<String, Object> errorResponse = checkErrorTrigger(request.orderId());
+        if (errorResponse != null) {
+            return ResponseEntity.ok(errorResponse);
         }
 
         BillingPayment payment = BillingPayment.success(
@@ -78,8 +98,22 @@ public class BillingController {
         return map;
     }
 
+    private Map<String, Object> checkErrorTrigger(String orderId) {
+        if (orderId == null) return null;
+        String lower = orderId.toLowerCase();
+        for (var entry : ERROR_TRIGGERS.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                ErrorSpec spec = entry.getValue();
+                return toFailResponse(orderId, spec.code(), spec.message());
+            }
+        }
+        return null;
+    }
+
     public record PayRequest(String billingKey, String orderId, long amount,
                              String productName, String buyerName) {}
 
     public record InquiryRequest(String tid) {}
+
+    private record ErrorSpec(String code, String message) {}
 }
