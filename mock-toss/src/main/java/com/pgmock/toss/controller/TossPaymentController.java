@@ -230,10 +230,13 @@ public class TossPaymentController {
         map.put("balanceAmount", p.getBalanceAmount());
         map.put("suppliedAmount", p.getSuppliedAmount());
         map.put("vat", p.getVat());
+        map.put("taxFreeAmount", p.getTaxFreeAmount());
+        map.put("taxExemptionAmount", p.getTaxExemptionAmount());
         map.put("status", p.getStatus());
-        map.put("requestedAt", p.getRequestedAt().toString());
-        map.put("approvedAt", p.getApprovedAt() != null ? p.getApprovedAt().toString() : null);
+        map.put("requestedAt", Payment.formatDateTime(p.getRequestedAt()));
+        map.put("approvedAt", Payment.formatDateTime(p.getApprovedAt()));
         map.put("useEscrow", p.isUseEscrow());
+        map.put("cultureExpense", p.isCultureExpense());
         map.put("lastTransactionKey", p.getLastTransactionKey());
         map.put("country", p.getCountry());
         map.put("isPartialCancelable", p.isPartialCancelable());
@@ -281,8 +284,11 @@ public class TossPaymentController {
         map.put("discount", null);
         map.put("easyPay", null);
         map.put("failure", null);
-        map.put("receipt", null);
-        map.put("checkout", null);
+
+        // receipt — 실무 코드가 receipt.url에 접근할 수 있으므로 구조 유지
+        map.put("receipt", Map.of("url", "https://mock-receipt.tosspayments.com/" + p.getPaymentKey()));
+        // checkout
+        map.put("checkout", Map.of("url", "https://mock-checkout.tosspayments.com/" + p.getPaymentKey()));
 
         return map;
     }
