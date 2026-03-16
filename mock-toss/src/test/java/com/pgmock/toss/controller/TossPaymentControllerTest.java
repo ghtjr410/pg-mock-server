@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Base64;
 
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -43,15 +44,21 @@ class TossPaymentControllerTest {
                 .andExpect(jsonPath("$.totalAmount").value(50000))
                 .andExpect(jsonPath("$.balanceAmount").value(50000))
                 .andExpect(jsonPath("$.status").value("DONE"))
-                .andExpect(jsonPath("$.requestedAt").isNotEmpty())
-                .andExpect(jsonPath("$.approvedAt").isNotEmpty())
+                // 날짜 형식: yyyy-MM-ddTHH:mm:ss+09:00 (나노초 없음)
+                .andExpect(jsonPath("$.requestedAt", matchesPattern("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}[+-]\\d{2}:\\d{2}")))
+                .andExpect(jsonPath("$.approvedAt", matchesPattern("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}[+-]\\d{2}:\\d{2}")))
                 .andExpect(jsonPath("$.country").value("KR"))
                 .andExpect(jsonPath("$.isPartialCancelable").value(true))
+                .andExpect(jsonPath("$.taxFreeAmount").value(0))
+                .andExpect(jsonPath("$.taxExemptionAmount").value(0))
+                .andExpect(jsonPath("$.cultureExpense").value(false))
                 .andExpect(jsonPath("$.card.issuerCode").value("11"))
                 .andExpect(jsonPath("$.card.acquirerCode").value("41"))
                 .andExpect(jsonPath("$.card.cardType").value("신용"))
                 .andExpect(jsonPath("$.card.ownerType").value("개인"))
                 .andExpect(jsonPath("$.card.installmentPlanMonths").value(0))
+                .andExpect(jsonPath("$.receipt.url").isNotEmpty())
+                .andExpect(jsonPath("$.checkout.url").isNotEmpty())
                 .andExpect(jsonPath("$.cancels").isEmpty());
     }
 

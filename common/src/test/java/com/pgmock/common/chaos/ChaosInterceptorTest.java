@@ -28,7 +28,7 @@ class ChaosInterceptorTest {
         props.setMode(ChaosMode.DEAD);
         ChaosInterceptor interceptor = new ChaosInterceptor(props);
 
-        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/payments/confirm");
         request.setRequestURI("/v1/payments/confirm");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -45,7 +45,7 @@ class ChaosInterceptorTest {
         props.setPartialFailureRate(100);
         ChaosInterceptor interceptor = new ChaosInterceptor(props);
 
-        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/payments/confirm");
         request.setRequestURI("/v1/payments/confirm");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -73,12 +73,43 @@ class ChaosInterceptorTest {
     }
 
     @Test
+    void DEAD모드에서_GET요청_기본우회() throws Exception {
+        ChaosProperties props = new ChaosProperties();
+        props.setMode(ChaosMode.DEAD);
+        // affectReadApis 기본값 false
+        ChaosInterceptor interceptor = new ChaosInterceptor(props);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/payments/tpk_xxx");
+        request.setRequestURI("/v1/payments/tpk_xxx");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+        assertThat(result).isTrue(); // GET은 카오스 적용 안됨
+    }
+
+    @Test
+    void DEAD모드에서_GET요청_affectReadApis_true면_적용() throws Exception {
+        ChaosProperties props = new ChaosProperties();
+        props.setMode(ChaosMode.DEAD);
+        props.setAffectReadApis(true);
+        ChaosInterceptor interceptor = new ChaosInterceptor(props);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/payments/tpk_xxx");
+        request.setRequestURI("/v1/payments/tpk_xxx");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+        assertThat(result).isFalse(); // affectReadApis=true면 GET도 카오스 적용
+        assertThat(response.getStatus()).isEqualTo(500);
+    }
+
+    @Test
     void 헤더_모드오버라이드() throws Exception {
         ChaosProperties props = new ChaosProperties();
         props.setMode(ChaosMode.NORMAL);
         ChaosInterceptor interceptor = new ChaosInterceptor(props);
 
-        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/v1/payments/confirm");
         request.setRequestURI("/v1/payments/confirm");
         request.addHeader("X-CHAOS-MODE", "DEAD");
         MockHttpServletResponse response = new MockHttpServletResponse();
