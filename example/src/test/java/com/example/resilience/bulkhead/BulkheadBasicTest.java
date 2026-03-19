@@ -5,6 +5,7 @@ import com.example.resilience.TestLogger;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -465,5 +466,72 @@ class BulkheadBasicTest extends ExampleTestBase {
         // 잘못된 순서: BulkheadFullException이 CB 실패로 집계됨
         TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
+    }
+
+    /**
+     * CB OPEN 상태에서 Bulkhead 슬롯이 순간 소비됐다가 즉시 반환되는 것을 검증한다.
+     *
+     * 흐름:
+     *   Bulkhead(바깥, maxConcurrent=3) → CB(안쪽, FORCED_OPEN)
+     *   → Bulkhead 슬롯 확보 → CB 즉시 거절(CallNotPermittedException)
+     *   → Bulkhead 슬롯 즉시 반환
+     *
+     * 핵심:
+     *   올바른 순서(Bulkhead 바깥 → CB 안쪽)에서 CB가 OPEN이면:
+     *   1. Bulkhead 슬롯을 잡고 → CB가 즉시 거절 → 슬롯 즉시 반환
+     *   2. CB 거절은 동기적(마이크로초)이므로 슬롯 점유 시간이 극히 짧다
+     *   3. 따라서 CB OPEN이 Bulkhead 가용성에 실질적 영향을 주지 않는다
+     *
+     *   이 메커니즘을 모르면 "CB OPEN인데 왜 Bulkhead가 관여하나?"라는 의문이 생긴다.
+     *   답: 데코레이터 순서상 Bulkhead가 먼저 실행되지만, 즉시 반환되므로 무해하다.
+     */
+    @Test
+    void CB_OPEN_상태에서_Bulkhead_슬롯은_잡았다가_즉시_반환된다() {
+        paymentClient.setChaosMode("NORMAL");
+
+        Bulkhead bulkhead = Bulkhead.of("test-cb-open-slot-" + UUID.randomUUID(), BulkheadConfig.custom()
+                .maxConcurrentCalls(3)
+                .maxWaitDuration(Duration.ZERO)
+                .build());
+        TestLogger.attach(bulkhead);
+
+        CircuitBreaker cb = CircuitBreaker.of("test-cb-open-" + UUID.randomUUID(),
+                CircuitBreakerConfig.custom()
+                        .failureRateThreshold(50)
+                        .minimumNumberOfCalls(5)
+                        .slidingWindowSize(5)
+                        .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                        .build());
+        TestLogger.attach(cb);
+
+        // CB를 강제 OPEN으로 전환
+        cb.transitionToForcedOpenState();
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.FORCED_OPEN);
+        assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(3);
+
+        // 10건 호출 → 모두 CB 거절, Bulkhead 슬롯은 즉시 반환
+        AtomicInteger callNotPermittedCount = new AtomicInteger(0);
+        for (int i = 0; i < 10; i++) {
+            String key = "pk_cb_open_slot_" + i;
+            Supplier<Map<String, Object>> cbDecorated = CircuitBreaker.decorateSupplier(cb,
+                    () -> paymentClient.confirm(key, "order_cb_open_slot", 10000));
+            Supplier<Map<String, Object>> fullChain = Bulkhead.decorateSupplier(bulkhead, cbDecorated);
+
+            try {
+                fullChain.get();
+            } catch (CallNotPermittedException e) {
+                callNotPermittedCount.incrementAndGet();
+            }
+
+            // 매 호출 후 슬롯이 즉시 반환되었는지 확인
+            assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(3);
+        }
+
+        // 10건 모두 CB 거절
+        assertThat(callNotPermittedCount.get()).isEqualTo(10);
+
+        // Bulkhead는 전혀 영향 없음 — 슬롯 전부 가용
+        TestLogger.summary(cb);
+        assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(3);
     }
 }
