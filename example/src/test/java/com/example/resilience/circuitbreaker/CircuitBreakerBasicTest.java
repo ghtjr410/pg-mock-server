@@ -14,6 +14,7 @@ import org.springframework.web.client.ResourceAccessException;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -146,5 +147,104 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
 
         TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    /**
+     * recordResult로 예외 없는 응답도 실패로 집계할 수 있는 것을 검증한다.
+     *
+     * 흐름:
+     *   NORMAL 모드 + recordResult(status=="IN_PROGRESS")
+     *   → 5건 중 5건이 IN_PROGRESS 결과 → 예외 없이 실패율 100% → OPEN
+     *
+     * 핵심:
+     *   PG API가 HTTP 200 + status="IN_PROGRESS"를 반환하면 예외가 안 나온다.
+     *   recordExceptions로는 이걸 실패로 집계할 수 없다.
+     *   recordResult를 사용하면 응답 본문의 비즈니스 상태를 실패로 판정할 수 있다.
+     *
+     *   Retry의 retryOnResult와 대응되는 CB 측 기능이다.
+     *   Retry는 "재시도 여부"를 결과로 판단하고, CB는 "실패 집계 여부"를 결과로 판단한다.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void recordResult로_예외_없는_응답도_실패로_집계할_수_있다() {
+        paymentClient.setChaosMode("NORMAL");
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        CircuitBreaker cb = CircuitBreaker.of("record-result-" + UUID.randomUUID(),
+                CircuitBreakerConfig.custom()
+                        .failureRateThreshold(50)
+                        .minimumNumberOfCalls(5)
+                        .slidingWindowSize(5)
+                        .recordResult(result -> {
+                            if (result instanceof Map) {
+                                return "IN_PROGRESS".equals(((Map<String, Object>) result).get("status"));
+                            }
+                            return false;
+                        })
+                        .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                        .build());
+        TestLogger.attach(cb);
+
+        // 5건 모두 IN_PROGRESS 반환 → 예외 없이 실패율 100%
+        for (int i = 0; i < 5; i++) {
+            Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb, () -> {
+                callCount.incrementAndGet();
+                return Map.of("status", "IN_PROGRESS", "paymentKey", "pk_in_progress");
+            });
+            try {
+                decorated.get();
+            } catch (Exception ignored) {}
+        }
+
+        // 예외가 없었는데도 실패율 100% → OPEN
+        TestLogger.summary(cb);
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(5);
+        assertThat(callCount.get()).isEqualTo(5);
+    }
+
+    /**
+     * recordResult 조건에 맞지 않는 정상 응답은 성공으로 집계되는 것을 검증한다.
+     *
+     * 흐름:
+     *   recordResult(status=="IN_PROGRESS") 설정
+     *   → status="DONE" 응답 5건 → predicate 불일치 → 성공 5건 → CLOSED 유지
+     *
+     * 핵심:
+     *   recordResult는 predicate가 true일 때만 실패로 집계한다.
+     *   정상 응답(DONE)은 predicate 불일치 → 성공으로 처리된다.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void recordResult_조건_불일치시_성공으로_집계된다() {
+        paymentClient.setChaosMode("NORMAL");
+
+        CircuitBreaker cb = CircuitBreaker.of("record-result-ok-" + UUID.randomUUID(),
+                CircuitBreakerConfig.custom()
+                        .failureRateThreshold(50)
+                        .minimumNumberOfCalls(5)
+                        .slidingWindowSize(5)
+                        .recordResult(result -> {
+                            if (result instanceof Map) {
+                                return "IN_PROGRESS".equals(((Map<String, Object>) result).get("status"));
+                            }
+                            return false;
+                        })
+                        .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                        .build());
+        TestLogger.attach(cb);
+
+        // 5건 정상 응답 (status=DONE) → predicate 불일치 → 성공
+        for (int i = 0; i < 5; i++) {
+            String key = "pk_done_" + i;
+            Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
+                    () -> paymentClient.confirm(key, "order_done", 10000));
+            decorated.get();
+        }
+
+        TestLogger.summary(cb);
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+        assertThat(cb.getMetrics().getNumberOfSuccessfulCalls()).isEqualTo(5);
+        assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(0);
     }
 }

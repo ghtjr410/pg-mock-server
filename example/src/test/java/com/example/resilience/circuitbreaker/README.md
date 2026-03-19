@@ -55,6 +55,25 @@ sequenceDiagram
     Note over Test: slidingWindowSize=100이면<br/>30%±~4.6% 분산<br/>50%를 넘을 확률 ≈ 0
 ```
 
+### recordResult: 예외 없는 응답도 실패로 집계
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant PG as PG API
+
+    Note over CB: recordResult:<br/>status=="IN_PROGRESS"
+
+    Test->>CB: call()
+    CB->>PG: 요청
+    PG-->>CB: 200 OK<br/>{"status": "IN_PROGRESS"}
+
+    Note over CB: 예외 없음, 하지만<br/>recordResult predicate 매칭<br/>→ 실패로 집계
+
+    Note over CB: recordExceptions: 예외 기반 판정<br/>recordResult: 결과값 기반 판정<br/>두 축이 독립적으로 동작
+```
+
 ---
 
 ## CircuitBreakerRecoveryTest
