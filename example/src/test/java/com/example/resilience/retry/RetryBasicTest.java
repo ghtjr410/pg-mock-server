@@ -14,6 +14,7 @@ import org.springframework.web.client.ResourceAccessException;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -207,5 +208,42 @@ class RetryBasicTest extends ExampleTestBase {
 
         // 3회 시도, 2번 대기(각 1초) → 최소 2초 소요
         assertThat(elapsed).isGreaterThanOrEqualTo(2000L);
+    }
+
+    /**
+     * maxAttempts는 "초기 호출 포함" 총 시도 횟수이며, 재시도만의 횟수가 아닌 것을 검증한다.
+     *
+     * 흐름:
+     *   DEAD 모드 + maxAttempts(3) → 실제 호출 3번 (초기 1회 + 재시도 2회)
+     *
+     * 핵심:
+     *   maxAttempts(3)은 "최대 3번 재시도"가 아니라 "최대 3번 시도"를 의미한다.
+     *   GitHub Issues에서 가장 흔한 혼란 사례 중 하나이다.
+     *   이름이 "max retry attempts"가 아니라 "max attempts"이다.
+     */
+    @Test
+    void maxAttempts는_초기_호출을_포함한_총_시도_횟수이다() {
+        paymentClient.setChaosMode("DEAD");
+
+        AtomicInteger actualCallCount = new AtomicInteger(0);
+
+        Retry retry = Retry.of("max-attempts-" + UUID.randomUUID(), RetryConfig.custom()
+                .maxAttempts(3) // 총 3번 시도 (초기 1 + 재시도 2)
+                .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                .build());
+        TestLogger.attach(retry);
+
+        Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry, () -> {
+            actualCallCount.incrementAndGet();
+            return paymentClient.confirm("pk_max_att", "order_max_att", 10000);
+        });
+
+        assertThatThrownBy(decorated::get).isInstanceOf(HttpServerErrorException.class);
+
+        // maxAttempts(3) = 실제 호출 3번 (초기 1 + 재시도 2), 4번이 아님
+        assertThat(actualCallCount.get()).isEqualTo(3);
+
+        // Retry 메트릭: 재시도 시도 횟수는 2 (초기 호출 제외)
+        assertThat(retry.getMetrics().getNumberOfFailedCallsWithRetryAttempt()).isEqualTo(1);
     }
 }
