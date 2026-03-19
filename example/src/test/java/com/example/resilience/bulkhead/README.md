@@ -1,10 +1,98 @@
 # Bulkhead 학습 테스트
 
-## 이 디렉토리가 증명하는 것
+동시 호출 제한과 장애 격리. Bulkhead는 동시 요청 수를 물리적으로 제한하여
+하나의 장애가 전체 시스템으로 번지는 것을 막는다.
 
-동시 호출 제한과 장애 격리.
+---
 
-### BulkheadBasicTest
-- maxConcurrentCalls 초과 → BulkheadFullException (즉시 거절)
-- maxWaitDuration > 0 → 대기 후 통과 가능
-- Bulkhead 거절 ≠ 서킷 실패 (독립 동작)
+## BulkheadBasicTest
+
+### 동시 25건 중 20건 통과, 5건 즉시 거절
+
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1~20
+    participant T2 as Thread 21~25
+    participant BH as Bulkhead<br/>(maxConcurrent=20)
+    participant Mock as Mock서버<br/>(SLOW 3초)
+
+    Note over BH: maxConcurrentCalls=20<br/>maxWaitDuration=0
+
+    par 25개 스레드 동시 시작
+        T1->>BH: call() × 20
+        BH->>Mock: 슬롯 확보 → 요청 전달
+        Note over Mock: 3초 대기 중...
+
+        T2->>BH: call() × 5
+        BH-->>T2: BulkheadFullException<br/>(슬롯 없음, 즉시 거절)
+    end
+
+    Note over T2: 거절된 요청은<br/>500ms 이내 완료 (fail-fast)
+
+    Mock-->>BH: 200 OK × 20 (3초 후)
+```
+
+### maxWaitDuration > 0 → 대기 후 통과
+
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1~3<br/>(1차)
+    participant T2 as Thread 4~6<br/>(대기)
+    participant BH as Bulkhead<br/>(maxConcurrent=3)
+    participant Mock as Mock서버<br/>(SLOW 2초)
+
+    Note over BH: maxConcurrentCalls=3<br/>maxWaitDuration=5s
+
+    par 6개 스레드 동시 시작
+        T1->>BH: call() × 3
+        BH->>Mock: 슬롯 확보 → 요청 전달
+
+        T2->>BH: call() × 3
+        Note over T2: 슬롯 없음 → 대기열 진입<br/>(최대 5초 대기)
+    end
+
+    Note over Mock: 2초 후 응답
+    Mock-->>BH: 200 OK × 3
+
+    Note over BH: 슬롯 반환 → 대기중 스레드 진입
+    BH->>Mock: 대기했던 3건 요청 전달
+    Mock-->>BH: 200 OK × 3
+
+    Note over BH: 전체 6건 성공<br/>거절 0건
+```
+
+### Bulkhead(바깥) + CB(안쪽) → 거절이 CB 실패로 집계 안 됨
+
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1~2
+    participant T2 as Thread 3~4
+    participant BH as Bulkhead<br/>(maxConcurrent=2)
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버<br/>(SLOW 3초)
+
+    par 4개 스레드 동시 시작
+        T1->>BH: call() × 2
+        BH->>CB: 슬롯 확보 → CB 진입
+        CB->>Mock: 요청 전달
+
+        T2->>BH: call() × 2
+        BH-->>T2: BulkheadFullException
+        Note over T2: CB에 도달하지 않음
+    end
+
+    Mock-->>CB: 200 OK × 2
+    CB->>CB: 성공 기록
+
+    Note over CB: failedCalls=0, state=CLOSED
+    Note over CB: Bulkhead 거절은<br/>CB 메트릭에 영향 없음
+```
+
+### 핵심 원칙
+
+```
+Bulkhead(바깥) → CircuitBreaker(안쪽) → 서버
+     ↑ 동시성 제한이 먼저
+     ↑ 거절된 요청은 CB에 도달하지 않음
+     ↑ CB 실패율이 오염되지 않음
+```
