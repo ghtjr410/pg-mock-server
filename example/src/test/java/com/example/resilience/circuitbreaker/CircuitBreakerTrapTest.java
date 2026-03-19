@@ -358,7 +358,87 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
     }
 
     @Nested
-    class 함정5_slowCallDurationThreshold {
+    class 함정5_slidingWindowSize가_minimumNumberOfCalls보다_작을_때 {
+
+        /**
+         * slidingWindowSize < minimumNumberOfCalls이면 Resilience4j가 minimumNumberOfCalls를
+         * slidingWindowSize로 자동 보정하여, 의도한 것보다 빨리 서킷이 열리는 함정을 검증한다.
+         *
+         * 흐름:
+         *   slidingWindowSize=5, minimumNumberOfCalls=10
+         *   → Resilience4j 내부에서 minimumNumberOfCalls를 5로 자동 보정
+         *   → 5건 실패만으로 OPEN (의도한 10건이 아님!)
+         *
+         * 핵심:
+         *   slidingWindowSize < minimumNumberOfCalls로 설정하면 Resilience4j가
+         *   조용히 minimumNumberOfCalls를 slidingWindowSize로 맞춘다.
+         *   에러나 경고 없이 자동 보정되므로, 개발자는 "10건 이상 실패해야 열린다"고
+         *   기대하지만 실제로는 5건만에 열린다.
+         *
+         *   설정 리뷰 시 slidingWindowSize >= minimumNumberOfCalls인지 반드시 확인해야 한다.
+         */
+        @Test
+        void slidingWindowSize가_minimumNumberOfCalls보다_작으면_자동_보정되어_의도보다_빨리_열린다() {
+            paymentClient.setChaosMode("DEAD");
+
+            CircuitBreaker cb = CircuitBreaker.of("trap-window-" + UUID.randomUUID(),
+                    CircuitBreakerConfig.custom()
+                            .failureRateThreshold(50)
+                            .slidingWindowSize(5)          // 윈도우 최대 5건
+                            .minimumNumberOfCalls(10)       // 의도: 10건 후 평가
+                            .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                            .build());
+            TestLogger.attach(cb);
+
+            // 5건만 실패해도 OPEN (minimumNumberOfCalls가 5로 자동 보정됨)
+            for (int i = 0; i < 5; i++) {
+                String key = "pk_trap_win_" + i;
+                Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
+                        () -> paymentClient.confirm(key, "order_trap_win", 10000));
+                try { decorated.get(); } catch (Exception ignored) {}
+            }
+
+            // 의도한 10건이 아니라 5건만에 OPEN! (자동 보정)
+            TestLogger.summary(cb);
+            assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        }
+
+        /**
+         * slidingWindowSize >= minimumNumberOfCalls로 설정하면 의도한 대로 동작하는 것을 검증한다.
+         *
+         * 해결:
+         *   slidingWindowSize를 minimumNumberOfCalls 이상으로 설정해야 한다.
+         *   이렇게 하면 자동 보정 없이 정확히 의도한 건수 후에 평가가 시작된다.
+         */
+        @Test
+        void slidingWindowSize가_minimumNumberOfCalls_이상이면_정상_동작한다() {
+            paymentClient.setChaosMode("DEAD");
+
+            CircuitBreaker cb = CircuitBreaker.of("trap-window-fix-" + UUID.randomUUID(),
+                    CircuitBreakerConfig.custom()
+                            .failureRateThreshold(50)
+                            .slidingWindowSize(10)         // 윈도우 10건
+                            .minimumNumberOfCalls(10)       // 평가 시작 조건 10건 (동일)
+                            .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                            .build());
+            TestLogger.attach(cb);
+
+            for (int i = 0; i < 10; i++) {
+                String key = "pk_trap_win_fix_" + i;
+                Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
+                        () -> paymentClient.confirm(key, "order_trap_win_fix", 10000));
+                try { decorated.get(); } catch (Exception ignored) {}
+            }
+
+            // 10건 실패 → minimumNumberOfCalls 충족 → 실패율 100% → OPEN
+            TestLogger.summary(cb);
+            assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        }
+    }
+
+    @Nested
+    class 함정6_slowCallDurationThreshold {
+
 
         /**
          * slowCallDurationThreshold(5s)가 readTimeout(3s)보다 크면 slow 호출을 감지하지 못하는 문제를 검증한다.
@@ -441,7 +521,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
     }
 
     @Nested
-    class 함정6_maxWaitDurationInHalfOpenState_기본값_0 {
+    class 함정7_maxWaitDurationInHalfOpenState_기본값_0 {
 
         private CircuitBreaker openCircuit(CircuitBreakerConfig config) {
             CircuitBreaker cb = CircuitBreaker.of("trap7-" + UUID.randomUUID(), config);
