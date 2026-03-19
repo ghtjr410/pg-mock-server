@@ -33,7 +33,7 @@ class TossPaymentControllerTest {
                                 {"paymentKey":"tpk_spec","orderId":"ORDER-SPEC","amount":50000}
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.version").value("2022-11-16"))
+                .andExpect(jsonPath("$.version").value("2024-06-01"))
                 .andExpect(jsonPath("$.paymentKey").value("tpk_spec"))
                 .andExpect(jsonPath("$.type").value("NORMAL"))
                 .andExpect(jsonPath("$.orderId").value("ORDER-SPEC"))
@@ -237,7 +237,14 @@ class TossPaymentControllerTest {
                 .andExpect(jsonPath("$.balanceAmount").value(0))
                 .andExpect(jsonPath("$.isPartialCancelable").value(false))
                 .andExpect(jsonPath("$.cancels[0].cancelAmount").value(7000))
-                .andExpect(jsonPath("$.cancels[0].cancelReason").value("고객 요청"));
+                .andExpect(jsonPath("$.cancels[0].cancelReason").value("고객 요청"))
+                .andExpect(jsonPath("$.cancels[0].cancelStatus").value("DONE"))
+                .andExpect(jsonPath("$.cancels[0].cancelRequestId").isEmpty())
+                .andExpect(jsonPath("$.cancels[0].taxFreeAmount").value(0))
+                .andExpect(jsonPath("$.cancels[0].receiptKey").isEmpty())
+                .andExpect(jsonPath("$.cancels[0].canceledAt", matchesPattern("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}[+-]\\d{2}:\\d{2}")))
+                .andExpect(jsonPath("$.suppliedAmount").value(0))
+                .andExpect(jsonPath("$.vat").value(0));
     }
 
     @Test
@@ -274,6 +281,41 @@ class TossPaymentControllerTest {
                 .andExpect(jsonPath("$.status").value("CANCELED"))
                 .andExpect(jsonPath("$.balanceAmount").value(0))
                 .andExpect(jsonPath("$.cancels.length()").value(2));
+    }
+
+    @Test
+    void 결제취소_멱등키_동일응답() throws Exception {
+        mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"paymentKey":"tpk_cancel_idem","orderId":"ORDER-CI","amount":6000}
+                        """));
+
+        String cancelIdempotencyKey = "cancel-idem-001";
+
+        mockMvc.perform(post("/v1/payments/tpk_cancel_idem/cancel")
+                        .header("Authorization", AUTH_HEADER)
+                        .header("Idempotency-Key", cancelIdempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"cancelReason":"멱등 취소","cancelAmount":3000}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PARTIAL_CANCELED"))
+                .andExpect(jsonPath("$.balanceAmount").value(3000));
+
+        // 같은 멱등키로 재전송 → 캐시된 응답 반환 (중복 취소 안 됨)
+        mockMvc.perform(post("/v1/payments/tpk_cancel_idem/cancel")
+                        .header("Authorization", AUTH_HEADER)
+                        .header("Idempotency-Key", cancelIdempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"cancelReason":"멱등 취소","cancelAmount":3000}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PARTIAL_CANCELED"))
+                .andExpect(jsonPath("$.balanceAmount").value(3000));
     }
 
     @Test

@@ -19,8 +19,8 @@ public class Payment {
     private final String orderName;
     private final long totalAmount;
     private long balanceAmount;
-    private final long suppliedAmount;
-    private final long vat;
+    private long suppliedAmount;
+    private long vat;
     private final long taxFreeAmount;
     private final long taxExemptionAmount;
     private String status;
@@ -55,7 +55,7 @@ public class Payment {
         this.mId = "tosspayments";
         this.currency = "KRW";
         this.country = "KR";
-        this.version = "2022-11-16";
+        this.version = "2024-06-01";
         this.requestedAt = OffsetDateTime.now(KST);
         this.useEscrow = false;
         this.cultureExpense = false;
@@ -76,6 +76,10 @@ public class Payment {
         long actualCancelAmount = (cancelAmount != null) ? cancelAmount : this.balanceAmount;
         this.balanceAmount -= actualCancelAmount;
 
+        // suppliedAmount/vat 재계산 (잔액 기준)
+        this.suppliedAmount = (long) Math.round(balanceAmount / 1.1);
+        this.vat = balanceAmount - this.suppliedAmount;
+
         if (this.balanceAmount == 0) {
             this.status = "CANCELED";
         } else {
@@ -86,7 +90,9 @@ public class Payment {
 
         Cancel cancel = new Cancel(
                 actualCancelAmount, reason, OffsetDateTime.now(KST),
-                this.lastTransactionKey, this.balanceAmount
+                this.lastTransactionKey, this.balanceAmount,
+                0, 0, 0, 0, 0,
+                null, "DONE", null
         );
         this.cancels.add(cancel);
         return cancel;
@@ -144,6 +150,9 @@ public class Payment {
 
     public record Cancel(
             long cancelAmount, String cancelReason, OffsetDateTime canceledAt,
-            String transactionKey, long refundableAmount
+            String transactionKey, long refundableAmount,
+            long taxFreeAmount, long taxExemptionAmount,
+            long cardDiscountAmount, long transferDiscountAmount, long easyPayDiscountAmount,
+            String receiptKey, String cancelStatus, String cancelRequestId
     ) {}
 }
