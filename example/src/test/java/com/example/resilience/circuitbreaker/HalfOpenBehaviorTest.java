@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
@@ -26,6 +27,7 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
 
     private CircuitBreaker openCircuit(CircuitBreakerConfig config) {
         CircuitBreaker cb = CircuitBreaker.of("ho-" + UUID.randomUUID(), config);
+        TestLogger.attach(cb);
         paymentClient.setChaosMode("DEAD");
         for (int i = 0; i < 5; i++) {
             String key = "pk_ho_" + i;
@@ -91,6 +93,7 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
         Thread.sleep(500); // permitted 호출이 진행 중임을 보장
 
         // 4번째 요청 → CallNotPermittedException
+        TestLogger.summary(cb);
         Supplier<Map<String, Object>> fourth = CircuitBreaker.decorateSupplier(cb,
                 () -> paymentClient.confirm("pk_ho_4th", "order_ho_4th", 10000));
         assertThatThrownBy(fourth::get).isInstanceOf(CallNotPermittedException.class);
@@ -144,6 +147,7 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
 
         // 3초 후에도 여전히 HALF_OPEN (maxWait=0 → 무한 대기)
         Thread.sleep(2500);
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
 
         try { slowCall.get(10, TimeUnit.SECONDS); } catch (Exception ignored) {}
@@ -199,6 +203,7 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
         // maxWaitDuration(2s) 후 강제 OPEN 복귀
         // waitDuration=30s이므로 다시 HALF_OPEN 되지 않음
         Thread.sleep(3000);
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
         executor.shutdownNow();

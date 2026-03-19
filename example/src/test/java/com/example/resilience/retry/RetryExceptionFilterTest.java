@@ -1,6 +1,7 @@
 package com.example.resilience.retry;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -40,6 +41,7 @@ class RetryExceptionFilterTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(ResourceAccessException.class) // timeout만 재시도
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_filter1", "order_filter1", 10000));
@@ -68,6 +70,7 @@ class RetryExceptionFilterTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         // reject_company → 403
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,

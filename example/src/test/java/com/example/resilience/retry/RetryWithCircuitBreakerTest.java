@@ -1,6 +1,7 @@
 package com.example.resilience.retry;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.retry.Retry;
@@ -48,6 +49,8 @@ class RetryWithCircuitBreakerTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(cb);
+        TestLogger.attach(retry);
 
         // 잘못된 순서: Retry → CB → client
         // Retry가 CB를 3번 호출 → CB에 3건 집계
@@ -60,6 +63,7 @@ class RetryWithCircuitBreakerTest extends ExampleTestBase {
         }
 
         // 2 논리 요청 × 3 재시도 = CB에 6건 집계
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(6);
     }
 
@@ -91,6 +95,8 @@ class RetryWithCircuitBreakerTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(cb);
+        TestLogger.attach(retry);
 
         // 올바른 순서: CB → Retry → client
         // Retry가 내부에서 소화 → CB에 1건만 집계
@@ -103,6 +109,7 @@ class RetryWithCircuitBreakerTest extends ExampleTestBase {
         }
 
         // 2 논리 요청 = CB에 2건 집계
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
     }
 }

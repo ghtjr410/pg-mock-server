@@ -1,6 +1,7 @@
 package com.example.resilience.retry;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -40,6 +41,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         // 재시도 시 NORMAL로 전환 → 두 번째 시도는 성공
         retry.getEventPublisher().onRetry(event ->
@@ -72,6 +74,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_retry_dead", "order_retry", 10000));
@@ -104,6 +107,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .maxAttempts(2)
                 .retryExceptions(ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_retry_to", "order_retry_to", 10000));
@@ -130,6 +134,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(ResourceAccessException.class) // HttpServerErrorException 없음
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_retry_no", "order_retry_no", 10000));
@@ -159,6 +164,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .maxAttempts(3)
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_retry_biz", "reject_company", 10000));
@@ -190,6 +196,7 @@ class RetryBasicTest extends ExampleTestBase {
                 .waitDuration(Duration.ofSeconds(1)) // 재시도 간 1초 대기
                 .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(retry);
 
         Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
                 () -> paymentClient.confirm("pk_retry_wait", "order_retry_wait", 10000));

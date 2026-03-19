@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -47,6 +48,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
                         .slidingWindowSize(5)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         for (int i = 0; i < 5; i++) {
             String key = "pk_slow_" + i;
@@ -56,6 +58,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
         }
 
         // slowCallRate 100% > 50% → OPEN
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         assertThat(cb.getMetrics().getSlowCallRate()).isGreaterThanOrEqualTo(50.0f);
     }
@@ -90,6 +93,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
                         .slidingWindowSize(3)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // 3건 모두 느리지만 성공
         for (int i = 0; i < 3; i++) {
@@ -102,6 +106,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
         }
 
         // 사용자에게는 성공이지만 서킷에는 slowCall로 집계됨
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfSlowSuccessfulCalls()).isEqualTo(3);
         assertThat(cb.getMetrics().getNumberOfSuccessfulCalls()).isEqualTo(3);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(0);
@@ -138,6 +143,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
                         .slidingWindowSize(4)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // 2건 정상 (느린 성공) + 2건 에러 트리거 (느린 실패)
         for (int i = 0; i < 2; i++) {
@@ -156,6 +162,7 @@ class SlowCallDetectionTest extends ExampleTestBase {
 
         // failureRate: 50% (2/4) < 80% → 이것만으로는 안 열림
         // slowCallRate: 100% (4/4) > 50% → 이걸로 열림
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfSlowCalls()).isEqualTo(4);
         assertThat(cb.getMetrics().getNumberOfSlowFailedCalls()).isEqualTo(2);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);

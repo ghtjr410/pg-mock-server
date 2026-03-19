@@ -1,6 +1,7 @@
 package com.example.resilience.bulkhead;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
@@ -54,6 +55,7 @@ class BulkheadBasicTest extends ExampleTestBase {
                 .maxConcurrentCalls(20)
                 .maxWaitDuration(Duration.ZERO)
                 .build());
+        TestLogger.attach(bulkhead);
 
         int totalCalls = 25;
         ExecutorService executor = Executors.newFixedThreadPool(totalCalls);
@@ -121,6 +123,7 @@ class BulkheadBasicTest extends ExampleTestBase {
                 .maxConcurrentCalls(20)
                 .maxWaitDuration(Duration.ZERO)
                 .build());
+        TestLogger.attach(bulkhead);
 
         int totalCalls = 25;
         ExecutorService executor = Executors.newFixedThreadPool(totalCalls);
@@ -188,6 +191,7 @@ class BulkheadBasicTest extends ExampleTestBase {
                 .maxConcurrentCalls(3)
                 .maxWaitDuration(Duration.ofSeconds(5)) // 최대 5초 대기
                 .build());
+        TestLogger.attach(bulkhead);
 
         int totalCalls = 6;
         ExecutorService executor = Executors.newFixedThreadPool(totalCalls);
@@ -254,6 +258,7 @@ class BulkheadBasicTest extends ExampleTestBase {
                 .maxConcurrentCalls(2)
                 .maxWaitDuration(Duration.ZERO)
                 .build());
+        TestLogger.attach(bulkhead);
 
         CircuitBreaker cb = CircuitBreaker.of("test-bulk-cb-" + UUID.randomUUID(),
                 CircuitBreakerConfig.custom()
@@ -262,6 +267,7 @@ class BulkheadBasicTest extends ExampleTestBase {
                         .slidingWindowSize(5)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         ExecutorService executor = Executors.newFixedThreadPool(4);
         CountDownLatch readyLatch = new CountDownLatch(4);
@@ -303,6 +309,7 @@ class BulkheadBasicTest extends ExampleTestBase {
         // 2건 Bulkhead 거절 발생
         assertThat(rejectedCount.get()).isEqualTo(2);
         // Bulkhead 거절은 CB까지 도달하지 않음 → CB 실패 카운트 0
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(0);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }

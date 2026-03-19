@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
@@ -42,6 +43,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
     void DEAD_모드에서_모든_요청_실패시_서킷이_OPEN으로_전환된다() {
         paymentClient.setChaosMode("DEAD");
         CircuitBreaker cb = createCircuitBreaker();
+        TestLogger.attach(cb);
 
         // 10건 실패 → 실패율 100% → OPEN
         for (int i = 0; i < 10; i++) {
@@ -54,6 +56,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
             }
         }
 
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
         // 11번째는 CallNotPermittedException
@@ -76,6 +79,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
     void PARTIAL_FAILURE_30퍼센트이면_실패율_50퍼센트_미만으로_CLOSED_유지() {
         paymentClient.setChaosMode("PARTIAL_FAILURE", Map.of("partialFailureRate", "30"));
         CircuitBreaker cb = createCircuitBreaker();
+        TestLogger.attach(cb);
 
         for (int i = 0; i < 100; i++) {
             String key = "pk_pf30_" + i;
@@ -87,6 +91,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
             }
         }
 
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
 
@@ -112,6 +117,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
                 .slidingWindowSize(10)
                 .recordExceptions(HttpServerErrorException.class, HttpClientErrorException.class, ResourceAccessException.class)
                 .build());
+        TestLogger.attach(cb);
 
         for (int i = 0; i < 100; i++) {
             String key = "pk_pf70_" + i;
@@ -123,6 +129,7 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
             }
         }
 
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 }

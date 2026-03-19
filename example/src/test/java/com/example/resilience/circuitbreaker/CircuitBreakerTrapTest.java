@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -46,6 +47,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             // minimumNumberOfCalls 기본값 = 100
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 10; i++) {
                 String key = "pk_trap1b_" + i;
@@ -55,6 +57,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // 10건밖에 안 했으므로 minimumNumberOfCalls(100) 미달 → 평가 안 됨
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         }
 
@@ -76,6 +79,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .slidingWindowSize(10)
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap1a_" + i;
@@ -84,6 +88,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                 try { decorated.get(); } catch (Exception ignored) {}
             }
 
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
     }
@@ -115,6 +120,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             // automaticTransitionFromOpenToHalfOpenEnabled 기본값 = false
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             // OPEN 진입
             for (int i = 0; i < 5; i++) {
@@ -127,6 +133,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
 
             // waitDuration만큼 대기해도 자동 전환 없음
             Thread.sleep(1500);
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
 
@@ -150,6 +157,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .automaticTransitionFromOpenToHalfOpenEnabled(true)
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap2a_" + i;
@@ -160,6 +168,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
             Thread.sleep(1500);
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
         }
     }
@@ -190,6 +199,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .recordExceptions(HttpServerErrorException.class, HttpClientErrorException.class, ResourceAccessException.class)
                             // ignoreExceptions 미설정 → 4xx도 실패로 카운트
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap3b_" + i;
@@ -199,6 +209,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // 비즈니스 에러(403)가 실패로 집계 → OPEN (오진)
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
 
@@ -221,6 +232,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .ignoreExceptions(HttpClientErrorException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap3a_" + i;
@@ -230,6 +242,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // 403은 무시됨 → CLOSED
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         }
     }
@@ -259,6 +272,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             // slidingWindowSize 기본값 = 100
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             // 10건 실패 (minimumNumberOfCalls=10 충족) 하지만 window=100 중 10건만 채워짐
             // minimumNumberOfCalls(10)은 충족되므로 실패율 계산은 됨
@@ -273,6 +287,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             // 10건 중 10건 실패 → 실패율 100% → 사실 OPEN이 됨
             // 진짜 함정: minimumNumberOfCalls 기본값도 100이면 여기서 CLOSED
             // slidingWindowSize=100 + minimumNumberOfCalls=100 → 100건 채워야 평가
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
 
@@ -297,6 +312,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             // slidingWindowSize 기본값 = 100, minimumNumberOfCalls 기본값 = 100
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 10; i++) {
                 String key = "pk_trap6b2_" + i;
@@ -306,6 +322,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // minimumNumberOfCalls(100) 미달 → 평가 안 됨 → CLOSED
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         }
 
@@ -326,6 +343,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .minimumNumberOfCalls(5)
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap6a_" + i;
@@ -334,6 +352,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                 try { decorated.get(); } catch (Exception ignored) {}
             }
 
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
     }
@@ -369,6 +388,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .slidingWindowSize(5)
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap4b_" + i;
@@ -378,6 +398,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // 2~2.5s < 5s(threshold) → slow로 안 잡힘 → CLOSED
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         }
 
@@ -404,6 +425,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
                             .slidingWindowSize(5)
                             .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                             .build());
+            TestLogger.attach(cb);
 
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap4a_" + i;
@@ -413,6 +435,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
             }
 
             // 2~2.5s > 1s(threshold) → slow 감지 → OPEN
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
         }
     }
@@ -422,6 +445,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
 
         private CircuitBreaker openCircuit(CircuitBreakerConfig config) {
             CircuitBreaker cb = CircuitBreaker.of("trap7-" + UUID.randomUUID(), config);
+            TestLogger.attach(cb);
             paymentClient.setChaosMode("DEAD");
             for (int i = 0; i < 5; i++) {
                 String key = "pk_trap7_" + i;
@@ -476,6 +500,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
 
             // 3초 후에도 HALF_OPEN에 갇혀 있음 (무한 대기)
             Thread.sleep(3000);
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
 
             executor.shutdownNow();
@@ -523,6 +548,7 @@ class CircuitBreakerTrapTest extends ExampleTestBase {
 
             // maxWaitDuration(2s) 후 강제 OPEN 복귀
             Thread.sleep(3000);
+            TestLogger.summary(cb);
             assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
             executor.shutdownNow();

@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -41,6 +42,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                         .minimumNumberOfCalls(5)
                         .slidingWindowSize(5)
                         .build());
+        TestLogger.attach(cb);
 
         // reject_company → 403 비즈니스 에러
         for (int i = 0; i < 5; i++) {
@@ -51,6 +53,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
         }
 
         // 비즈니스 에러(403)가 실패로 집계 → OPEN (오진!)
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 
@@ -77,6 +80,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                         .ignoreExceptions(HttpClientErrorException.class)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // 403 에러 10건 → 서킷 CLOSED (ignoreExceptions로 무시됨)
         for (int i = 0; i < 10; i++) {
@@ -96,6 +100,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                     () -> paymentClient.confirm(key, "system_error", 10000));
             try { decorated.get(); } catch (Exception ignored) {}
         }
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isGreaterThan(0);
     }
 
@@ -122,6 +127,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                         .slidingWindowSize(5)
                         .recordExceptions(HttpServerErrorException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // 403 → recordExceptions에 없으므로 성공으로 집계
         for (int i = 0; i < 3; i++) {
@@ -140,6 +146,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                     () -> paymentClient.confirm(key, "system_error", 10000));
             try { decorated.get(); } catch (Exception ignored) {}
         }
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
     }
 
@@ -169,6 +176,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                                 e instanceof HttpServerErrorException ||
                                 e instanceof ResourceAccessException)
                         .build());
+        TestLogger.attach(cb);
 
         // 403 → Predicate false → 성공으로 집계
         for (int i = 0; i < 3; i++) {
@@ -186,6 +194,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                     () -> paymentClient.confirm(key, "system_error", 10000));
             try { decorated.get(); } catch (Exception ignored) {}
         }
+        TestLogger.summary(cb);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
     }
 
@@ -215,6 +224,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
                         // HttpClientErrorException을 ignore → RuntimeException에 해당하더라도 무시
                         .ignoreExceptions(HttpClientErrorException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // reject_company → HttpClientErrorException(403)
         // RuntimeException 하위지만 ignoreExceptions가 우선 → 무시됨
@@ -226,6 +236,7 @@ class ExceptionHandlingTest extends ExampleTestBase {
         }
 
         // ignoreExceptions가 우선 → 실패로 집계되지 않음 → CLOSED
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(0);
     }

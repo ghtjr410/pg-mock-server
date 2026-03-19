@@ -1,6 +1,7 @@
 package com.example.resilience.circuitbreaker;
 
 import com.example.resilience.ExampleTestBase;
+import com.example.resilience.TestLogger;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -42,6 +43,7 @@ class CircuitBreakerRecoveryTest extends ExampleTestBase {
                         .automaticTransitionFromOpenToHalfOpenEnabled(true)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // DEAD → OPEN
         paymentClient.setChaosMode("DEAD");
@@ -65,6 +67,7 @@ class CircuitBreakerRecoveryTest extends ExampleTestBase {
                     () -> paymentClient.confirm(key, "order_rec_ok", 10000));
             decorated.get();
         }
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
 
@@ -92,6 +95,7 @@ class CircuitBreakerRecoveryTest extends ExampleTestBase {
                         .automaticTransitionFromOpenToHalfOpenEnabled(true)
                         .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
                         .build());
+        TestLogger.attach(cb);
 
         // DEAD → OPEN
         paymentClient.setChaosMode("DEAD");
@@ -114,6 +118,7 @@ class CircuitBreakerRecoveryTest extends ExampleTestBase {
                     () -> paymentClient.confirm(key, "order_rec_fail", 10000));
             try { decorated.get(); } catch (Exception ignored) {}
         }
+        TestLogger.summary(cb);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 }
