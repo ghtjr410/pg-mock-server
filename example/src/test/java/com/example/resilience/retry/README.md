@@ -307,3 +307,81 @@ sequenceDiagram
 
     Note over Test: maxAttempts(3) =<br/>초기 1회 + 재시도 2회 = 총 3회<br/><br/>❌ "재시도 3번" (X)<br/>✅ "시도 3번" (O)
 ```
+
+---
+
+## RetryResultPredicateTest
+
+예외가 아닌 응답 값을 기준으로 재시도하는 `retryOnResult`.
+PG API가 HTTP 200 + `status: "IN_PROGRESS"`를 반환하는 경우.
+
+### 결과값 기반 재시도 → 성공
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+    participant PG as PG API
+
+    Note over Retry: maxAttempts=3<br/>retryOnResult:<br/>status=="IN_PROGRESS"
+
+    Test->>Retry: call()
+    Retry->>PG: 1차 요청
+    PG-->>Retry: 200 OK<br/>{"status": "IN_PROGRESS"}
+    Note over Retry: 예외 없음, 하지만<br/>predicate 매칭 → 재시도
+
+    Retry->>PG: 2차 요청
+    PG-->>Retry: 200 OK<br/>{"status": "IN_PROGRESS"}
+    Note over Retry: predicate 매칭 → 재시도
+
+    Retry->>PG: 3차 요청
+    PG-->>Retry: 200 OK<br/>{"status": "DONE"}
+    Note over Retry: predicate 불일치 → 성공
+
+    Retry-->>Test: {"status": "DONE"} 반환
+```
+
+### 모든 시도 매칭 → 마지막 결과 반환 (예외 아님)
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+    participant PG as PG API
+
+    Note over Retry: maxAttempts=3<br/>retryOnResult:<br/>status=="IN_PROGRESS"
+
+    loop 3회 모두 IN_PROGRESS
+        Retry->>PG: 요청
+        PG-->>Retry: 200 OK<br/>{"status": "IN_PROGRESS"}
+    end
+
+    Retry-->>Test: {"status": "IN_PROGRESS"} 반환
+
+    Note over Test: retryExceptions와의 차이:<br/>예외가 아닌 마지막 결과를 반환<br/>호출자가 status 확인 필요
+```
+
+### 예외 + 결과값 복합 재시도
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+    participant PG as PG API
+
+    Note over Retry: retryExceptions=[5xx]<br/>retryOnResult:<br/>status=="IN_PROGRESS"
+
+    Retry->>PG: 1차 요청
+    PG-->>Retry: 500 Error
+    Note over Retry: retryExceptions 매칭 → 재시도
+
+    Retry->>PG: 2차 요청
+    PG-->>Retry: 200 OK<br/>{"status": "IN_PROGRESS"}
+    Note over Retry: retryOnResult 매칭 → 재시도
+
+    Retry->>PG: 3차 요청
+    PG-->>Retry: 200 OK<br/>{"status": "DONE"}
+
+    Retry-->>Test: 성공
+    Note over Test: 예외와 결과값 모두<br/>재시도 트리거로 동작
+```
