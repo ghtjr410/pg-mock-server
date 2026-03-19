@@ -112,6 +112,95 @@ sequenceDiagram
     end
 ```
 
+### 복구 후 sliding window 리셋
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버
+
+    rect rgb(255, 230, 230)
+        Note over Mock: DEAD 모드
+        loop 5회 실패
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 500 Error
+        end
+        Note over CB: CLOSED → OPEN
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Mock: NORMAL 모드로 전환
+        Note over CB: OPEN → HALF_OPEN
+        loop 3회 성공
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 200 OK
+        end
+        Note over CB: HALF_OPEN → CLOSED (복구)
+    end
+
+    rect rgb(230, 240, 255)
+        Note over CB: sliding window 리셋됨
+        loop 2회 실패 + 3회 성공
+            Test->>CB: call()
+            CB->>CB: 결과 기록
+        end
+        Note over CB: failureRate=40% < 50%<br/>→ CLOSED 유지
+        Note over CB: 이전 실패 이력이<br/>이월되지 않음을 증명
+    end
+```
+
+### HALF_OPEN 경계값: threshold 미만 → CLOSED
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker<br/>(HALF_OPEN)
+    participant Mock as Mock서버
+
+    Note over CB: permittedCalls=3<br/>failureRateThreshold=50%
+
+    Test->>CB: call("system_error")
+    CB->>Mock: GET /confirm
+    Mock-->>CB: 500 Error
+    CB->>CB: 실패 기록 (1/3)
+
+    loop 2회 성공
+        Test->>CB: call()
+        CB->>Mock: GET /confirm
+        Mock-->>CB: 200 OK
+    end
+
+    Note over CB: failureRate=33% < 50%
+    Note over CB: HALF_OPEN → CLOSED (복구)
+```
+
+### HALF_OPEN 경계값: threshold 이상 → OPEN
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker<br/>(HALF_OPEN)
+    participant Mock as Mock서버
+
+    Note over CB: permittedCalls=3<br/>failureRateThreshold=50%
+
+    loop 2회 실패
+        Test->>CB: call("system_error")
+        CB->>Mock: GET /confirm
+        Mock-->>CB: 500 Error
+    end
+
+    Test->>CB: call()
+    CB->>Mock: GET /confirm
+    Mock-->>CB: 200 OK
+
+    Note over CB: failureRate=66% > 50%
+    Note over CB: HALF_OPEN → OPEN (재진입)
+```
+
 ---
 
 ## SlowCallDetectionTest
@@ -167,6 +256,41 @@ sequenceDiagram
 
     Note over CB: failureRate=0% < 60% (실패 없음)<br/>slowCallRate=60% >= 60%
     Note over CB: slowCallRate만으로 OPEN 전환
+```
+
+### HALF_OPEN에서 느린 성공 → OPEN 재진입
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버<br/>(SLOW 2초)
+
+    Note over CB: slowCallRateThreshold=50%<br/>permittedCalls=3
+
+    rect rgb(255, 230, 230)
+        Note over CB: Phase 1: SLOW → OPEN
+        loop 3회 (느린 성공)
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 200 OK (2초)
+        end
+        Note over CB: slowCallRate=100% > 50%<br/>→ OPEN
+    end
+
+    Note over Test: waitDuration 대기
+    Note over CB: OPEN → HALF_OPEN
+
+    rect rgb(255, 245, 230)
+        Note over CB: Phase 2: HALF_OPEN에서도 느림
+        loop 3회 (느린 성공)
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 200 OK (2초)
+        end
+        Note over CB: slowCallRate=100% > 50%<br/>→ OPEN 재진입
+        Note over CB: 성공해도 느리면<br/>복구가 안 된다
+    end
 ```
 
 ---
@@ -391,6 +515,124 @@ sequenceDiagram
 ### 함정 6: maxWaitDurationInHalfOpenState=0
 
 (HalfOpenBehaviorTest 섹션 참고)
+
+---
+
+## TimeBasedWindowTest
+
+COUNT_BASED와 TIME_BASED의 핵심 차이 — 시간이 지나면 오래된 호출이 자동으로 만료된다.
+
+### TIME_BASED 윈도우 만료
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버
+
+    Note over CB: slidingWindowType=TIME_BASED<br/>slidingWindowSize=3 (3초)
+
+    rect rgb(255, 230, 230)
+        Note over Mock: DEAD 모드
+        loop 3회 실패
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 500 Error
+        end
+        Note over CB: CLOSED → OPEN
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Mock: NORMAL 모드
+        Note over CB: OPEN → HALF_OPEN → CLOSED
+    end
+
+    Note over Test: 4초 대기<br/>(3초 윈도우 만료)
+
+    rect rgb(230, 240, 255)
+        Note over CB: 윈도우가 비어 있음
+        Test->>CB: call("system_error")
+        CB->>Mock: GET /confirm
+        Mock-->>CB: 500 Error
+
+        loop 2회 성공
+            Test->>CB: call()
+            CB->>Mock: GET /confirm
+            Mock-->>CB: 200 OK
+        end
+
+        Note over CB: failureRate=33% < 50%<br/>→ CLOSED 유지
+        Note over CB: COUNT_BASED였다면<br/>이전 실패가 남아 있을 수 있음
+    end
+```
+
+---
+
+## SpecialStateTest
+
+수동 상태 전환 — FORCED_OPEN, DISABLED, METRICS_ONLY.
+
+### FORCED_OPEN: 수동 서킷 차단
+
+```mermaid
+sequenceDiagram
+    participant Ops as 운영자
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버
+
+    Ops->>CB: transitionToForcedOpenState()
+    Note over CB: FORCED_OPEN
+
+    loop 모든 요청
+        Ops->>CB: call()
+        CB-->>Ops: CallNotPermittedException
+        Note over CB: 서버에 도달하지 않음
+    end
+
+    Note over CB: failureRate와 무관하게<br/>모든 요청 즉시 거부
+```
+
+### DISABLED: 서킷 비활성화
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버<br/>(DEAD)
+
+    Test->>CB: transitionToDisabledState()
+    Note over CB: DISABLED
+
+    loop 5회 실패
+        Test->>CB: call()
+        CB->>Mock: GET /confirm
+        Mock-->>CB: 500 Error
+        Note over CB: 에러 발생하지만<br/>상태 전이 없음
+    end
+
+    Note over CB: DISABLED 유지<br/>차단 없음
+```
+
+### METRICS_ONLY: 메트릭만 수집
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+    participant Mock as Mock서버<br/>(DEAD)
+
+    Test->>CB: transitionToMetricsOnlyState()
+    Note over CB: METRICS_ONLY
+
+    loop 5회 실패
+        Test->>CB: call()
+        CB->>Mock: GET /confirm
+        Mock-->>CB: 500 Error
+        CB->>CB: 실패 메트릭 기록<br/>(차단하지 않음)
+    end
+
+    Note over CB: METRICS_ONLY 유지<br/>failedCalls=5 집계됨<br/>차단 없음
+```
 
 ---
 

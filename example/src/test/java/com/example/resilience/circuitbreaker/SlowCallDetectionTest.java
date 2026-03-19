@@ -167,4 +167,63 @@ class SlowCallDetectionTest extends ExampleTestBase {
         assertThat(cb.getMetrics().getNumberOfSlowFailedCalls()).isEqualTo(2);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
+
+    /**
+     * HALF_OPEN에서 느린 성공만으로도 slowCallRate 초과 시 OPEN으로 재진입하는 것을 검증한다.
+     *
+     * 흐름:
+     *   1. SLOW 모드 → slowCallRate로 OPEN
+     *   2. SLOW 유지 + 대기 → HALF_OPEN
+     *   3. 3건 모두 느리지만 성공 → slowCallRate 100% > 50% → OPEN 재진입
+     *
+     * 핵심:
+     *   성공해도 느리면 복구가 안 된다.
+     *   HALF_OPEN에서도 slowCallRate가 평가되며, threshold를 넘으면 다시 OPEN된다.
+     */
+    @Test
+    void HALF_OPEN에서_느린_성공만으로도_slowCallRate_초과시_OPEN_재진입한다() throws InterruptedException {
+        paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "2000", "slowMaxMs", "2000"));
+        paymentClient.configure(
+                "http://" + mockToss.getHost() + ":" + mockToss.getMappedPort(8090),
+                5000, 5000);
+
+        CircuitBreaker cb = CircuitBreaker.of("slow-ho-reopen-" + UUID.randomUUID(),
+                CircuitBreakerConfig.custom()
+                        .failureRateThreshold(100)  // 일반 실패로는 안 열리게
+                        .slowCallDurationThreshold(Duration.ofSeconds(1))
+                        .slowCallRateThreshold(50)
+                        .minimumNumberOfCalls(3)
+                        .slidingWindowSize(3)
+                        .waitDurationInOpenState(Duration.ofSeconds(1))
+                        .permittedNumberOfCallsInHalfOpenState(3)
+                        .automaticTransitionFromOpenToHalfOpenEnabled(true)
+                        .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                        .build());
+        TestLogger.attach(cb);
+
+        // Phase 1: SLOW → slowCallRate 100% → OPEN
+        for (int i = 0; i < 3; i++) {
+            String key = "pk_slow_ho_" + i;
+            Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
+                    () -> paymentClient.confirm(key, "order_slow_ho", 10000));
+            try { decorated.get(); } catch (Exception ignored) {}
+        }
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+
+        // Phase 2: 대기 → HALF_OPEN (SLOW 유지)
+        Thread.sleep(1500);
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
+
+        // Phase 3: 3건 느린 성공 → slowCallRate 100% > 50% → OPEN 재진입
+        for (int i = 0; i < 3; i++) {
+            String key = "pk_slow_ho_re_" + i;
+            Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
+                    () -> paymentClient.confirm(key, "order_slow_ho_re", 10000));
+            try { decorated.get(); } catch (Exception ignored) {}
+        }
+
+        TestLogger.summary(cb);
+        assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        assertThat(cb.getMetrics().getSlowCallRate()).isGreaterThanOrEqualTo(50.0f);
+    }
 }
