@@ -1,6 +1,6 @@
 # pg-mock-server
 
-토스페이먼츠 / KG이니시스 Mock PG 서버.
+토스페이먼츠 / 나이스페이먼츠 Mock PG 서버.
 실무 코드 한 줄 안 바꾸고 `base-url`만 전환하여 Resilience4j(타임아웃, 서킷브레이커, 재시도) 테스트.
 
 ---
@@ -11,11 +11,11 @@
 # mock-toss (:8090)
 ./gradlew :mock-toss:bootRun
 
-# mock-kg-inicis (:8091)
-./gradlew :mock-kg-inicis:bootRun
+# mock-nice (:8091)
+./gradlew :mock-nice:bootRun
 
 # 또는 Docker로 동시 실행
-./gradlew :mock-toss:build :mock-kg-inicis:build -x test
+./gradlew :mock-toss:build :mock-nice:build -x test
 docker compose up
 ```
 
@@ -30,8 +30,10 @@ payment:
   toss:
     base-url: http://localhost:8090   # mock-toss
     secret-key: test_sk_xxxx         # 아무 값이나 OK
-  kg-inicis:
-    base-url: http://localhost:8091   # mock-kg-inicis
+  nice:
+    base-url: http://localhost:8091   # mock-nice
+    client-key: testClientKey
+    secret-key: testSecretKey
 ```
 
 실무 코드 변경: **없음**. 프로필만 전환.
@@ -85,25 +87,49 @@ curl -X POST http://localhost:8090/v1/payments/tpk_001/cancel \
 
 ---
 
-## mock-kg-inicis API
+## mock-nice API
 
-### 빌링 결제
+모든 API에 `Authorization: Basic {clientKey:secretKey를 Base64}` 헤더 필요.
+
+### 결제 승인
 
 ```bash
-curl -X POST http://localhost:8091/api/v1/billing/pay \
+curl -X POST http://localhost:8091/v1/payments/nicuntct_001 \
+  -H "Authorization: Basic $(echo -n 'testClientKey:testSecretKey' | base64)" \
   -H "Content-Type: application/json" \
-  -d '{
-    "billingKey":"blk_001","orderId":"ORDER-001",
-    "amount":30000,"productName":"월간 구독","buyerName":"홍길동"
-  }'
+  -d '{"amount":50000}'
 ```
 
-### 거래 조회
+### 거래 조회 (tid)
 
 ```bash
-curl -X POST http://localhost:8091/api/v1/billing/inquiry \
+curl http://localhost:8091/v1/payments/nicuntct_001 \
+  -H "Authorization: Basic $(echo -n 'testClientKey:testSecretKey' | base64)"
+```
+
+### 거래 조회 (orderId)
+
+```bash
+curl http://localhost:8091/v1/payments/find/ORDER-nicuntct_001 \
+  -H "Authorization: Basic $(echo -n 'testClientKey:testSecretKey' | base64)"
+```
+
+### 결제 취소 (전액)
+
+```bash
+curl -X POST http://localhost:8091/v1/payments/nicuntct_001/cancel \
+  -H "Authorization: Basic $(echo -n 'testClientKey:testSecretKey' | base64)" \
   -H "Content-Type: application/json" \
-  -d '{"tid":"INI20250101120000001"}'
+  -d '{"reason":"고객 요청","orderId":"ORDER-nicuntct_001"}'
+```
+
+### 결제 취소 (부분)
+
+```bash
+curl -X POST http://localhost:8091/v1/payments/nicuntct_001/cancel \
+  -H "Authorization: Basic $(echo -n 'testClientKey:testSecretKey' | base64)" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"부분 환불","orderId":"ORDER-nicuntct_001","cancelAmt":3000}'
 ```
 
 ---
@@ -206,16 +232,31 @@ cancelReason에 키워드 포함:
 | `cancel_system_error` | 500 | `FAILED_INTERNAL_SYSTEM_PROCESSING` |
 | `cancel_method_error` | 500 | `FAILED_METHOD_HANDLING_CANCEL` |
 
-### mock-kg-inicis 에러
+### mock-nice 승인 에러
 
-orderId에 키워드 포함:
+tid에 키워드 포함 (orderId = ORDER-{tid}):
 
-| 키워드 | resultCode | resultMsg |
-|--------|-----------|-----------|
-| `limit` | `V110` | 한도초과 |
-| `expired` | `V120` | 카드 유효기간 오류 |
-| `badcard` | `V130` | 카드번호 오류 |
-| `syserr` | `E001` | 시스템 오류 |
+| 키워드 | HTTP | resultCode | 재시도 |
+|--------|------|-----------|--------|
+| `card_error` | 400 | `3011` | X |
+| `card_reject` | 400 | `3095` | X |
+| `amount_error` | 400 | `3041` | X |
+| `duplicate_order` | 400 | `A127` | X |
+| `expired_session` | 400 | `A245` | X |
+| `amount_mismatch` | 400 | `A123` | X |
+| `auth_fail` | 401 | `U104` | X |
+| `provider_error` | 500 | `A110` | O |
+| `system_error` | 500 | `9002` | O |
+| `socket_error` | 500 | `U508` | O |
+
+### mock-nice cancel 에러
+
+reason에 키워드 포함:
+
+| 키워드 | HTTP | resultCode |
+|--------|------|-----------|
+| `cancel_fail` | 400 | `2003` |
+| `cancel_system_error` | 500 | `9002` |
 
 ---
 
@@ -263,7 +304,8 @@ curl -X PUT "http://localhost:8090/chaos/mode?mode=PARTIAL_FAILURE&partialFailur
 pg-mock-server/
 ├── common/              ← 카오스 모드 엔진 (ChaosInterceptor, ChaosController)
 ├── mock-toss/           ← :8090 | 토스페이먼츠 API Mock
-├── mock-kg-inicis/      ← :8091 | KG이니시스 빌링 API Mock
+├── mock-nice/           ← :8091 | 나이스페이먼츠 API Mock
+├── docs/                ← PG별 공식 스펙 및 Mock 가이드
 ├── docker-compose.yml
 └── README.md
 ```

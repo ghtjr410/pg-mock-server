@@ -7,7 +7,6 @@ PG사 Mock 서버 — Resilience4j 등 장애 대응 테스트용.
 ```bash
 ./gradlew build                  # 전체 빌드 + 테스트
 ./gradlew :mock-toss:test        # 모듈별 테스트
-./gradlew :mock-kg-inicis:test
 ./gradlew :common:test
 ```
 
@@ -19,7 +18,7 @@ PG사 Mock 서버 — Resilience4j 등 장애 대응 테스트용.
 |------|------|------|
 | `common` | - | 카오스 시뮬레이션 엔진 (라이브러리) |
 | `mock-toss` | 8090 | 토스페이먼츠 결제 API Mock |
-| `mock-kg-inicis` | 8091 | KG이니시스 빌링 API Mock |
+| `mock-nice` | 8091 | 나이스페이먼츠 결제 API Mock |
 
 ### 문서
 
