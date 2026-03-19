@@ -134,6 +134,20 @@ curl -X POST http://localhost:8091/v1/payments/nicuntct_001/cancel \
 
 ---
 
+## 테스트 초기화 API
+
+테스트 간 격리를 위해 Mock 서버 상태를 초기화합니다. 인증 불필요.
+
+```bash
+# mock-toss 초기화 (결제 저장소 + 멱등키 캐시 + 카오스 설정)
+curl -X DELETE http://localhost:8090/test/reset
+
+# mock-nice 초기화 (결제 저장소 + 카오스 설정)
+curl -X DELETE http://localhost:8091/test/reset
+```
+
+---
+
 ## 카오스 모드
 
 모든 Mock 서버가 공유하는 장애 시뮬레이션. POST/PUT 요청에만 적용되고, GET(조회)은 기본적으로 영향 안 받음.

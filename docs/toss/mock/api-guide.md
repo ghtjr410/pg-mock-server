@@ -15,7 +15,8 @@ mock-toss는 토스페이먼츠 결제 API의 Mock 서버입니다.
 6. [멱등키 (Idempotency-Key)](#6-멱등키-idempotency-key)
 7. [에러 트리거](#7-에러-트리거)
 8. [카오스 모드](#8-카오스-모드)
-9. [테스트 시나리오 레시피](#9-테스트-시나리오-레시피)
+9. [테스트 초기화 API](#9-테스트-초기화-api)
+10. [테스트 시나리오 레시피](#10-테스트-시나리오-레시피)
 
 ---
 
@@ -597,7 +598,43 @@ curl -X POST http://localhost:8090/v1/payments/confirm \
 
 ---
 
-## 9. 테스트 시나리오 레시피
+## 9. 테스트 초기화 API
+
+테스트 간 격리를 위해 Mock 서버의 상태를 초기화합니다.
+
+### 요청
+
+```
+DELETE /test/reset → 204 No Content
+```
+
+```bash
+curl -X DELETE http://localhost:8090/test/reset
+```
+
+> 인증 불필요. 테스트 전용 엔드포인트입니다.
+
+### 초기화 대상
+
+| 대상 | 설명 |
+|------|------|
+| 인메모리 결제 저장소 | 전체 삭제 |
+| 멱등키 캐시 | 전체 삭제 |
+| 카오스 설정 | 기본값 복구 (NORMAL, 3000~10000ms, 50%, affectReadApis=false) |
+
+### 사용 시나리오
+
+```java
+@BeforeEach
+void setUp() {
+    // 테스트 간 상태 격리
+    restClient.delete().uri("/test/reset").retrieve().toBodilessEntity();
+}
+```
+
+---
+
+## 10. 테스트 시나리오 레시피
 
 ### 시나리오 1: 타임아웃 → 조회 → 멱등키 재시도
 

@@ -14,7 +14,8 @@ mock-nice는 나이스페이먼츠 결제 API의 Mock 서버입니다.
 5. [결제 취소 API](#5-결제-취소-api)
 6. [에러 트리거](#6-에러-트리거)
 7. [카오스 모드](#7-카오스-모드)
-8. [테스트 시나리오 레시피](#8-테스트-시나리오-레시피)
+8. [테스트 초기화 API](#8-테스트-초기화-api)
+9. [테스트 시나리오 레시피](#9-테스트-시나리오-레시피)
 
 ---
 
@@ -342,7 +343,42 @@ curl -X PUT "http://localhost:8091/chaos/mode?mode=NORMAL"
 
 ---
 
-## 8. 테스트 시나리오 레시피
+## 8. 테스트 초기화 API
+
+테스트 간 격리를 위해 Mock 서버의 상태를 초기화합니다.
+
+### 요청
+
+```
+DELETE /test/reset → 204 No Content
+```
+
+```bash
+curl -X DELETE http://localhost:8091/test/reset
+```
+
+> 인증 불필요. 테스트 전용 엔드포인트입니다.
+
+### 초기화 대상
+
+| 대상 | 설명 |
+|------|------|
+| 인메모리 결제 저장소 | 전체 삭제 |
+| 카오스 설정 | 기본값 복구 (NORMAL, 3000~10000ms, 50%, affectReadApis=false) |
+
+### 사용 시나리오
+
+```java
+@BeforeEach
+void setUp() {
+    // 테스트 간 상태 격리
+    restClient.delete().uri("/test/reset").retrieve().toBodilessEntity();
+}
+```
+
+---
+
+## 9. 테스트 시나리오 레시피
 
 ### 시나리오 1: 타임아웃 → 조회 → 재시도
 
