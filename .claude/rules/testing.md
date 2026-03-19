@@ -4,6 +4,6 @@
 - 모듈별 테스트 실행:
   ```bash
   ./gradlew :mock-toss:test
-  ./gradlew :mock-kg-inicis:test
+  ./gradlew :mock-nice:test
   ./gradlew :common:test
   ```
