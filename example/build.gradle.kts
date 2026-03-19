@@ -11,6 +11,7 @@ dependencies {
     implementation("io.github.resilience4j:resilience4j-retry:2.2.0")
     implementation("io.github.resilience4j:resilience4j-bulkhead:2.2.0")
     implementation("io.github.resilience4j:resilience4j-timelimiter:2.2.0")
+    implementation("io.github.resilience4j:resilience4j-ratelimiter:2.2.0")
 
     // Testcontainers
     testImplementation("org.testcontainers:testcontainers:1.20.4")

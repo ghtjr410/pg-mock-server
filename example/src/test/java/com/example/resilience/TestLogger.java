@@ -2,7 +2,9 @@ package com.example.resilience;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.timelimiter.TimeLimiter;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -62,6 +64,26 @@ public class TestLogger {
             .onCallRejected(e -> System.out.printf(
                 "  🚫 [BULKHEAD 거절] 동시호출 한도 초과%n"))
             .onCallFinished(e -> {});
+    }
+
+    public static void attach(RateLimiter rateLimiter) {
+        rateLimiter.getEventPublisher()
+            .onSuccess(e -> System.out.printf(
+                "  ✅ [RL 허용] %s%n", rateLimiter.getName()))
+            .onFailure(e -> System.out.printf(
+                "  🚫 [RL 거절] %s — 허용량 초과%n", rateLimiter.getName()));
+    }
+
+    public static void attach(TimeLimiter timeLimiter) {
+        timeLimiter.getEventPublisher()
+            .onSuccess(e -> System.out.printf(
+                "  ✅ [TL 성공] %s%n", timeLimiter.getName()))
+            .onTimeout(e -> System.out.printf(
+                "  ⏱️ [TL 타임아웃] %s%n", timeLimiter.getName()))
+            .onError(e -> System.out.printf(
+                "  ❌ [TL 에러] %s | %s%n",
+                timeLimiter.getName(),
+                e.getThrowable().getClass().getSimpleName()));
     }
 
     public static void summary(CircuitBreaker cb) {
