@@ -343,6 +343,120 @@ sequenceDiagram
 
 ---
 
+## RetryIgnoreExceptionsTest
+
+Retry에도 CB와 동일한 ignoreExceptions 메커니즘이 있다.
+
+### ignoreExceptions → 즉시 전파
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+    participant Mock as Mock서버
+
+    Note over Retry: retryExceptions=[5xx, timeout]<br/>ignoreExceptions=[4xx]
+
+    Test->>Retry: call("reject_company")
+    Retry->>Mock: GET /confirm
+    Mock-->>Retry: 403 Forbidden
+    Note over Retry: ignoreExceptions에 해당<br/>→ 재시도 없이 즉시 전파
+    Retry-->>Test: HttpClientErrorException
+
+    Note over Retry: callCount=1 (재시도 없음)
+```
+
+### ignoreExceptions + retryExceptions 충돌 → ignore 우선
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+
+    Note over Retry: retryExceptions=[HttpServerErrorException]<br/>ignoreExceptions=[HttpServerErrorException]
+
+    Test->>Retry: call() → 500 Error
+    Note over Retry: retryExceptions에도 있고<br/>ignoreExceptions에도 있음<br/>→ ignore 우선!
+    Retry-->>Test: 재시도 없이 즉시 전파
+
+    Note over Test: CB와 동일한 원리:<br/>ignore > retry
+```
+
+### ignoreExceptions 부모 예외 → 자식도 무시
+
+| 설정 | 예외 | 결과 |
+|------|------|------|
+| ignore(HttpStatusCodeException) | 500 (HttpServerErrorException = 자식) | 즉시 전파 (1번 호출) |
+| ignore(HttpStatusCodeException) | timeout (ResourceAccessException ≠ 자식) | 재시도 (3번 호출) |
+
+---
+
+## RetryExceptionPredicateTest
+
+retryExceptions(Class...) 리스트 방식과 retryOnException(Predicate) 방식의 차이.
+
+### Predicate로 커스텀 재시도 조건
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+
+    Note over Retry: retryOnException(Predicate)<br/>5xx, timeout → true<br/>4xx → false
+
+    rect rgb(255, 230, 230)
+        Test->>Retry: call() → 403
+        Note over Retry: Predicate false → 즉시 전파
+    end
+
+    rect rgb(230, 255, 230)
+        Test->>Retry: call() → 500
+        Note over Retry: Predicate true → 재시도
+    end
+```
+
+---
+
+## RetryIntervalBiFunctionTest
+
+예외/결과 종류에 따라 대기시간을 동적으로 변경하는 intervalBiFunction.
+
+### 예외 종류별 다른 대기시간
+
+```mermaid
+sequenceDiagram
+    participant Retry as Retry
+    participant Mock as Mock서버
+
+    Note over Retry: intervalBiFunction:<br/>ResourceAccessException → 3초<br/>HttpServerErrorException → 1초
+
+    rect rgb(255, 230, 230)
+        Retry->>Mock: timeout → ResourceAccessException
+        Note over Retry: 3초 대기 (서버 과부하)
+    end
+
+    rect rgb(255, 245, 230)
+        Retry->>Mock: 500 → HttpServerErrorException
+        Note over Retry: 1초 대기 (일시적 오류)
+    end
+```
+
+### 결과 기반 재시도에서도 동작
+
+```mermaid
+sequenceDiagram
+    participant Retry as Retry
+    participant PG as PG API
+
+    Note over Retry: intervalBiFunction:<br/>Either.right (결과) → 2초<br/>Either.left (예외) → 1초
+
+    Retry->>PG: 요청
+    PG-->>Retry: 200 OK {"status": "IN_PROGRESS"}
+    Note over Retry: 결과 기반 → 2초 대기 (폴링 간격)
+```
+
+---
+
 ## RetryResultPredicateTest
 
 예외가 아닌 응답 값을 기준으로 재시도하는 `retryOnResult`.

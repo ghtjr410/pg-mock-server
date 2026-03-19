@@ -434,7 +434,46 @@ sequenceDiagram
 
 ---
 
-## CircuitBreakerTrapTest — 설정 함정 6가지
+## CircuitBreakerResetTest
+
+| 테스트 | 증명 |
+|--------|------|
+| OPEN에서 reset 호출시 CLOSED로 복구되고 메트릭이 초기화된다 | 수동 리셋 — 운영 중 긴급 복구 |
+| FORCED OPEN에서 reset 호출시 CLOSED로 복구되고 정상 요청이 통과한다 | PG 점검 후 즉시 복구 |
+| reset 후 이전 실패 이력이 이월되지 않는다 | sliding window까지 완전 초기화 |
+
+---
+
+## ExceptionInheritanceTest
+
+| 테스트 | 증명 |
+|--------|------|
+| recordExceptions에 부모 예외 지정시 자식 예외도 실패로 집계된다 | instanceof 기반 판정 — 예외 계층 상속 |
+| 부모 예외 지정시 4xx 자식도 실패로 집계되어 오진이 발생한다 | HttpStatusCodeException → 4xx/5xx 구분 불가 |
+| 부모 예외 record와 ignoreExceptions로 자식을 선별적으로 제외한다 | 넓게 record + 좁게 ignore 패턴 |
+
+---
+
+## IgnoreInHalfOpenTest
+
+| 테스트 | 증명 |
+|--------|------|
+| HALF OPEN에서 모든 permitted가 ignore되면 판정 불가로 HALF OPEN에 머문다 | permitted 소모하되 결과 불포함 → 상태 전이 불가 |
+| HALF OPEN에서 ignore와 성공이 섞이면 성공만으로 판정된다 | ignore는 "없었던 것" — 성공만으로 CLOSED |
+| HALF OPEN에서 ignore와 실패가 섞이면 실패만으로 판정된다 | ignore 제외 후 실패율 계산 → OPEN 재진입 |
+
+---
+
+## WaitIntervalFunctionTest
+
+| 테스트 | 증명 |
+|--------|------|
+| exponential backoff로 OPEN 대기 시간이 실패 반복마다 증가한다 | 1차 1초 → 2차 2초 (지수 증가) |
+| 고정 waitDuration은 실패 반복해도 대기 시간이 동일하다 | 대비: 고정 vs exponential backoff |
+
+---
+
+## CircuitBreakerTrapTest — 설정 함정 7가지
 
 각 함정마다 "잘못된 설정 → 올바른 설정" Before/After 증명.
 
@@ -509,7 +548,30 @@ sequenceDiagram
     end
 ```
 
-### 함정 5: slowCallDurationThreshold와 readTimeout 관계
+### 함정 5: slidingWindowSize < minimumNumberOfCalls
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant CB as CircuitBreaker
+
+    rect rgb(255, 230, 230)
+        Note over CB: slidingWindowSize=5<br/>minimumNumberOfCalls=10
+
+        loop 20회 실패
+            Test->>CB: call() → 500
+        end
+
+        Note over CB: 의도: 10건 후 평가 시작<br/>실제: Resilience4j가 자동으로<br/>minimumNumberOfCalls를 5로 보정!<br/>→ 5건만에 OPEN (의도보다 빨리 열림)
+    end
+
+    rect rgb(230, 255, 230)
+        Note over CB: slidingWindowSize=10<br/>minimumNumberOfCalls=10
+        Note over Test: window >= minCalls이면 정상 동작
+    end
+```
+
+### 함정 6: slowCallDurationThreshold와 readTimeout 관계
 
 ```mermaid
 sequenceDiagram
@@ -535,7 +597,7 @@ sequenceDiagram
     end
 ```
 
-### 함정 6: maxWaitDurationInHalfOpenState=0
+### 함정 7: maxWaitDurationInHalfOpenState=0
 
 (HalfOpenBehaviorTest 섹션 참고)
 

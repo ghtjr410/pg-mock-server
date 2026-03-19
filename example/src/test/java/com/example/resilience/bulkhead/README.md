@@ -165,6 +165,73 @@ sequenceDiagram
     Note over BH: CB 거절이 동기적이므로<br/>슬롯 점유 시간 ≈ 0<br/>실질적 영향 없음
 ```
 
+---
+
+## ThreadPoolBulkheadTest
+
+SemaphoreBulkhead와 다른 실행 모델 — 별도 스레드풀 + 큐.
+
+### SemaphoreBulkhead vs ThreadPoolBulkhead
+
+| 항목 | SemaphoreBulkhead | ThreadPoolBulkhead |
+|------|-------------------|---------------------|
+| 실행 스레드 | 호출자 스레드 그대로 | 전용 스레드풀 |
+| 제한 방식 | maxConcurrentCalls | maxThreadPoolSize + queueCapacity |
+| 반환 타입 | T (동기) | CompletionStage\<T\> (비동기) |
+| ThreadLocal | 유지됨 | 유실됨 (contextPropagator 필요) |
+
+### maxThreadPoolSize + queueCapacity 초과 → 거절
+
+```mermaid
+sequenceDiagram
+    participant T1 as 요청 1~2
+    participant T2 as 요청 3~4
+    participant T3 as 요청 5~6
+    participant TP as ThreadPoolBulkhead<br/>(thread=2, queue=2)
+    participant Mock as Mock서버<br/>(SLOW 3초)
+
+    T1->>TP: submit() × 2
+    Note over TP: 스레드풀에서 실행 (2/2)
+    TP->>Mock: 요청 전달
+
+    T2->>TP: submit() × 2
+    Note over TP: 큐에서 대기 (2/2)
+
+    T3->>TP: submit() × 2
+    TP-->>T3: BulkheadFullException<br/>(스레드 + 큐 모두 가득)
+```
+
+### 큐 대기 → 스레드 반환 → 자동 실행
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant TP as ThreadPoolBulkhead<br/>(thread=2, queue=2)
+    participant Mock as Mock서버<br/>(SLOW 2초)
+
+    Test->>TP: submit() × 4
+    Note over TP: 2건 실행 + 2건 큐 대기
+
+    Note over Mock: 2초 후 응답
+    Mock-->>TP: 200 OK × 2
+    Note over TP: 스레드 반환 → 큐의 2건 자동 실행
+
+    Note over Mock: 2초 후 응답
+    Mock-->>TP: 200 OK × 2
+
+    Note over TP: 전체 4건 성공
+```
+
+### ThreadPoolBulkhead(바깥) + CB(안쪽)
+
+| 설정 | 동시 요청 | 통과 | 거절 | CB 실패 |
+|------|----------|------|------|---------|
+| thread=2, queue=0 | 4건 | 2건 | 2건 | 0건 |
+
+거절은 CB 도달 전에 발생 → CB 메트릭 영향 없음.
+
+---
+
 ### 핵심 원칙
 
 ```

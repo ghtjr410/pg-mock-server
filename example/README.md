@@ -40,6 +40,14 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 | HALF OPEN에서 실패율이 threshold 미만이면 CLOSED로 복구된다 | 33% < 50% → CLOSED |
 | HALF OPEN에서 실패율이 threshold 이상이면 OPEN으로 재진입한다 | 66% > 50% → OPEN |
 
+### CircuitBreakerResetTest
+
+| 테스트 | 증명 |
+|--------|------|
+| OPEN에서 reset 호출시 CLOSED로 복구되고 메트릭이 초기화된다 | 수동 리셋 — 운영 중 긴급 복구 |
+| FORCED OPEN에서 reset 호출시 CLOSED로 복구되고 정상 요청이 통과한다 | PG 점검 후 즉시 복구 |
+| reset 후 이전 실패 이력이 이월되지 않는다 | sliding window까지 완전 초기화 |
+
 ### SlowCallDetectionTest
 
 | 테스트 | 증명 |
@@ -67,6 +75,29 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 | recordFailurePredicate로 커스텀 실패 판단 5xx만 실패 | 조건부 실패 판단 |
 | ignoreExceptions가 recordExceptions보다 우선한다 | 양쪽에 있으면 ignore 우선 |
 
+### ExceptionInheritanceTest
+
+| 테스트 | 증명 |
+|--------|------|
+| recordExceptions에 부모 예외 지정시 자식 예외도 실패로 집계된다 | instanceof 기반 판정 — 예외 계층 상속 |
+| 부모 예외 지정시 4xx 자식도 실패로 집계되어 오진이 발생한다 | HttpStatusCodeException → 4xx/5xx 구분 불가 |
+| 부모 예외 record와 ignoreExceptions로 자식을 선별적으로 제외한다 | 넓게 record + 좁게 ignore 패턴 |
+
+### IgnoreInHalfOpenTest
+
+| 테스트 | 증명 |
+|--------|------|
+| HALF OPEN에서 모든 permitted가 ignore되면 판정 불가로 HALF OPEN에 머문다 | permitted 소모하되 결과 불포함 → 상태 전이 불가 |
+| HALF OPEN에서 ignore와 성공이 섞이면 성공만으로 판정된다 | ignore는 "없었던 것" — 성공만으로 CLOSED |
+| HALF OPEN에서 ignore와 실패가 섞이면 실패만으로 판정된다 | ignore 제외 후 실패율 계산 → OPEN 재진입 |
+
+### WaitIntervalFunctionTest
+
+| 테스트 | 증명 |
+|--------|------|
+| exponential backoff로 OPEN 대기 시간이 실패 반복마다 증가한다 | 1차 1초 → 2차 2초 (지수 증가) |
+| 고정 waitDuration은 실패 반복해도 대기 시간이 동일하다 | 대비: 고정 vs exponential backoff |
+
 ### CircuitBreakerTrapTest
 
 | 테스트 (Before/After 쌍) | 함정 |
@@ -75,8 +106,9 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 | 함정2: `automaticTransitionFromOpenToHalfOpenEnabled` | 기본값 false → 호출 없으면 OPEN에 영원히 머무름 |
 | 함정3: `ignoreExceptions` | 미설정 → 비즈니스 에러가 실패로 오진 |
 | 함정4: `slidingWindowSize` | 기본값 100 → 장애 감지 지연 |
-| 함정5: `slowCallDurationThreshold` | threshold > readTimeout → slowCall 감지 불가 |
-| 함정6: `maxWaitDurationInHalfOpenState` | 기본값 0 → HALF_OPEN 무한 대기 |
+| 함정5: `slidingWindowSize < minimumNumberOfCalls` | 자동 보정되어 의도보다 빨리 서킷 열림 |
+| 함정6: `slowCallDurationThreshold` | threshold > readTimeout → slowCall 감지 불가 |
+| 함정7: `maxWaitDurationInHalfOpenState` | 기본값 0 → HALF_OPEN 무한 대기 |
 
 ### TimeBasedWindowTest
 
@@ -96,7 +128,7 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 
 ## retry/
 
-재시도 동작, 예외 필터, 결과 기반 재시도, CircuitBreaker 조합.
+재시도 동작, 예외 필터, 결과 기반 재시도, ignoreExceptions, Predicate, intervalBiFunction, CircuitBreaker 조합.
 
 ### RetryBasicTest
 
@@ -119,12 +151,36 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 | retryExceptions에 포함된 예외만 재시도 대상이다 | 화이트리스트 방식 재시도 |
 | 비즈니스 에러 403은 재시도하지 않는다 | HttpClientErrorException 재시도 제외 |
 
+### RetryIgnoreExceptionsTest
+
+| 테스트 | 증명 |
+|--------|------|
+| ignoreExceptions에 지정된 예외는 재시도 없이 즉시 전파된다 | 명시적 재시도 금지 (블랙리스트) |
+| ignoreExceptions와 retryExceptions에 동일 예외 지정시 ignore가 우선한다 | CB와 동일 원리: ignore > retry |
+| ignoreExceptions에 부모 예외 지정시 자식도 재시도가 무시된다 | 예외 계층 상속 — instanceof 기반 |
+
+### RetryExceptionPredicateTest
+
+| 테스트 | 증명 |
+|--------|------|
+| retryOnException Predicate로 커스텀 재시도 조건을 적용한다 | retryExceptions 리스트와 다른 방식 |
+| Predicate false이면 재시도 없이 즉시 실패한다 | 조건 불일치 → 즉시 전파 |
+| Predicate로 HTTP 상태 코드별 세밀한 재시도 제어가 가능하다 | 5xx만 재시도, 4xx는 즉시 전파 |
+
 ### RetryBackoffTest
 
 | 테스트 | 증명 |
 |--------|------|
 | exponentialBackoff 적용시 대기시간이 지수적으로 증가한다 | 1초→2초→4초 대기 간격 검증 |
 | exponentialRandomBackoff 적용시 대기시간이 jitter 범위 안에 있다 | thundering herd 방지 — 랜덤 범위 검증 |
+
+### RetryIntervalBiFunctionTest
+
+| 테스트 | 증명 |
+|--------|------|
+| intervalBiFunction으로 예외 종류별 대기시간을 동적으로 변경한다 | timeout → 3초, 500 → 1초 |
+| intervalBiFunction으로 500에러시 짧은 대기시간을 적용한다 | 일시적 오류는 짧게 재시도 |
+| intervalBiFunction은 결과 기반 재시도에서도 동작한다 | Either.right → 폴링 간격 설정 |
 
 ### RetryResultPredicateTest
 
@@ -146,9 +202,9 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 
 ## bulkhead/
 
-동시 호출 제한과 장애 격리.
+동시 호출 제한과 장애 격리. SemaphoreBulkhead와 ThreadPoolBulkhead.
 
-### BulkheadBasicTest
+### BulkheadBasicTest (SemaphoreBulkhead)
 
 | 테스트 | 증명 |
 |--------|------|
@@ -160,11 +216,57 @@ Mock 서버를 대상으로 Resilience4j의 핵심 동작을 증명하는 테스
 | CB 바깥 Bulkhead 안쪽이면 거절이 CB 실패로 집계된다 | 잘못된 순서: 동시성 포화가 장애로 오인 |
 | CB OPEN 상태에서 Bulkhead 슬롯은 잡았다가 즉시 반환된다 | CB 거절이 동기적 → 슬롯 점유 무해 |
 
+### ThreadPoolBulkheadTest
+
+| 테스트 | 증명 |
+|--------|------|
+| maxThreadPoolSize와 queueCapacity 초과시 거절된다 | 스레드 2 + 큐 2 = 최대 4건, 초과 시 BulkheadFullException |
+| queueCapacity 0이면 스레드풀 가득시 즉시 거절된다 | 큐 없음 → fail-fast |
+| 큐 대기 중이던 요청이 스레드 반환 후 실행된다 | BlockingQueue → 스레드 비면 자동 실행 |
+| ThreadPoolBulkhead는 전용 스레드풀에서 실행된다 | 호출자 스레드와 다름 → ThreadLocal 유실 |
+| ThreadPoolBulkhead 바깥 CB 안쪽이면 거절이 CB에 영향주지 않는다 | SemaphoreBulkhead와 동일 원리 |
+
+---
+
+## ratelimiter/
+
+일정 시간 동안 허용 가능한 호출 수 제한.
+
+### RateLimiterBasicTest
+
+| 테스트 | 증명 |
+|--------|------|
+| limitForPeriod 초과시 RequestNotPermitted 발생한다 | 기본 차단 동작 |
+| timeoutDuration이 0보다 크면 허용량 갱신까지 대기 후 통과한다 | 대기 메커니즘 (Bulkhead maxWaitDuration과 유사) |
+| timeoutDuration 0이면 즉시 거절된다 | fail-fast 동작 |
+| limitRefreshPeriod 경과 후 허용량이 갱신된다 | 주기적 리셋 메커니즘 |
+| 동시 요청에서 정확히 limitForPeriod만 통과한다 | AtomicInteger 기반 동시성 보장 |
+| RateLimiter 바깥 CB 안쪽이면 거절이 CB 실패로 집계되지 않는다 | 올바른 순서: 거절은 CB 도달 전 |
+| CB 바깥 RateLimiter 안쪽이면 거절이 CB 실패로 집계된다 | 잘못된 순서: rate limit 초과가 CB 오염 |
+
+---
+
+## timelimiter/
+
+CompletableFuture 기반 비동기 호출의 타임아웃 제어. readTimeout과는 다른 레이어.
+
+### TimeLimiterBasicTest
+
+| 테스트 | 증명 |
+|--------|------|
+| timeoutDuration 초과시 TimeoutException 발생한다 | 비즈니스 레벨 타임아웃 |
+| 응답이 timeoutDuration 이내이면 성공한다 | 타임아웃 이내 → 정상 결과 |
+| cancelRunningFuture true이면 타임아웃시 Future가 취소된다 | 리소스 해제 보장 |
+| cancelRunningFuture false이면 타임아웃 후에도 작업이 계속 실행된다 | 부수효과 보호 (DB 쓰기 등) |
+| TimeLimiter 타임아웃이 CB 실패로 집계된다 | TimeoutException → CB 실패 |
+| readTimeout이 TimeLimiter보다 짧으면 ResourceAccessException이 먼저 발생한다 | 네트워크 타임아웃 우선 |
+| TimeLimiter가 readTimeout보다 짧으면 TimeoutException이 먼저 발생한다 | 비즈니스 타임아웃 우선 |
+
 ---
 
 ## combination/
 
-Bulkhead → CB → Retry 3단 조합 통합 테스트.
+3단~5단 조합의 실제 동작과 순서 함정.
 
 ### FullChainTest
 
@@ -173,11 +275,28 @@ Bulkhead → CB → Retry 3단 조합 통합 테스트.
 | Bulkhead CB Retry 3단 조합에서 각 레이어가 올바르게 동작한다 | 전부 실패 → CB OPEN → 후속 즉시 거절, Retry 재시도는 CB 1건 |
 | 삼단 조합에서 Retry 성공시 CB 성공 집계되고 Bulkhead 슬롯 반환된다 | Retry가 실패 흡수 → CB/Bulkhead 모두 영향 없음 |
 
+### FiveLayerChainTest
+
+| 테스트 | 증명 |
+|--------|------|
+| 풀체인 5단에서 정상 요청이 모든 레이어를 통과한다 | Retry→CB→RL→TL→BH 전부 통과 |
+| 풀체인 5단에서 RateLimiter 거절이 CB를 오염시키는 함정을 증명한다 | 기본 Aspect 순서의 함정: RL이 CB 안쪽 |
+| 풀체인 5단에서 장애시 Retry와 CB가 올바르게 연동한다 | CB OPEN 후 하위 레이어 도달 안 함 |
+
+### RetryBulkheadSlotTest
+
+| 테스트 | 증명 |
+|--------|------|
+| Bulkhead 바깥 Retry 안쪽이면 재시도가 슬롯을 추가 점유하지 않는다 | 같은 슬롯 안에서 재시도 |
+| Retry 바깥 Bulkhead 안쪽이면 재시도가 슬롯을 경쟁한다 | 재시도마다 슬롯 새로 확보 → BulkheadFullException 위험 |
+| CB OPEN시 retryExceptions에 CallNotPermittedException이 없으면 즉시 실패한다 | 올바른 동작: CB 차단 존중 |
+| CB OPEN시 retryExceptions에 CallNotPermittedException을 넣으면 무의미한 재시도가 발생한다 | 오작동: CB 차단을 Retry가 무력화 |
+
 ---
 
 ## timeout/
 
-네트워크 타임아웃의 기본 동작.
+네트워크 타임아웃의 기본 동작. 비즈니스 레벨 타임아웃은 [timelimiter/](src/test/java/com/example/resilience/timelimiter/README.md) 참조.
 
 ### TimeoutTest
 
