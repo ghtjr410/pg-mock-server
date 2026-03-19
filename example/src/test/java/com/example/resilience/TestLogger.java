@@ -44,7 +44,9 @@ public class TestLogger {
             .onRetry(e -> System.out.printf(
                 "  🔄 [RETRY #%d] %s%n",
                 e.getNumberOfRetryAttempts(),
-                e.getLastThrowable().getClass().getSimpleName()))
+                e.getLastThrowable() != null
+                        ? e.getLastThrowable().getClass().getSimpleName()
+                        : "result mismatch"))
             .onSuccess(e -> System.out.printf(
                 "  ✅ [RETRY 성공] attempts=%d%n",
                 e.getNumberOfRetryAttempts()))
