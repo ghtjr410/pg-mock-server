@@ -88,6 +88,61 @@ sequenceDiagram
     Note over CB: Bulkhead 거절은<br/>CB 메트릭에 영향 없음
 ```
 
+### 슬롯 반환 → 대기 중이던 요청 통과
+
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1~2<br/>(슬롯 점유)
+    participant T3 as Thread 3<br/>(대기)
+    participant BH as Bulkhead<br/>(maxConcurrent=2)
+    participant Mock as Mock서버<br/>(SLOW 2초)
+
+    Note over BH: maxWaitDuration=5s
+
+    T1->>BH: call() × 2
+    BH->>Mock: 슬롯 확보 → 요청 전달
+    Note over BH: 가용 슬롯: 0
+
+    Note over T3: 1초 후 요청
+    T3->>BH: call()
+    Note over BH: 슬롯 없음 → 대기열 진입
+
+    Note over Mock: 2초 후 응답
+    Mock-->>BH: 200 OK × 2
+    Note over BH: 슬롯 반환 → 가용 슬롯: 2
+
+    BH->>Mock: 대기 중이던 요청 전달
+    Note over T3: 슬롯 대기 ~1초 + SLOW 2초
+    Mock-->>BH: 200 OK
+
+    Note over BH: 전체 3건 성공
+```
+
+### CB(바깥) → Bulkhead(안쪽) — 잘못된 순서
+
+```mermaid
+sequenceDiagram
+    participant T1 as Thread 1~2
+    participant T2 as Thread 3~4
+    participant CB as CircuitBreaker<br/>(바깥)
+    participant BH as Bulkhead<br/>(안쪽, maxConcurrent=2)
+    participant Mock as Mock서버<br/>(SLOW 3초)
+
+    par 4개 스레드 동시 시작
+        T1->>CB: call() × 2
+        CB->>BH: CB 진입 → Bulkhead 확인
+        BH->>Mock: 슬롯 확보 → 요청 전달
+
+        T2->>CB: call() × 2
+        CB->>BH: CB 진입 → Bulkhead 확인
+        BH-->>CB: BulkheadFullException
+        CB->>CB: 실패 +2
+        Note over CB: 서버는 정상인데<br/>Bulkhead 거절이 실패로 집계!
+    end
+
+    Note over CB: failedCalls=2<br/>서킷이 의도치 않게 열릴 수 있음
+```
+
 ### 핵심 원칙
 
 ```
@@ -95,4 +150,8 @@ Bulkhead(바깥) → CircuitBreaker(안쪽) → 서버
      ↑ 동시성 제한이 먼저
      ↑ 거절된 요청은 CB에 도달하지 않음
      ↑ CB 실패율이 오염되지 않음
+
+CB(바깥) → Bulkhead(안쪽) → 서버  ← 잘못된 순서!
+     ↑ BulkheadFullException이 CB 실패로 집계
+     ↑ 서버 정상인데 서킷 열림 (오작동)
 ```
