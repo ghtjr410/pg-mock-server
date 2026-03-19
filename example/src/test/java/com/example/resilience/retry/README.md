@@ -308,6 +308,39 @@ sequenceDiagram
     Note over Test: maxAttempts(3) =<br/>초기 1회 + 재시도 2회 = 총 3회<br/><br/>❌ "재시도 3번" (X)<br/>✅ "시도 3번" (O)
 ```
 
+### failAfterMaxAttempts: 예외 기반 vs 결과 기반
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant Retry as Retry
+
+    rect rgb(255, 230, 230)
+        Note over Retry: 예외 기반 재시도<br/>failAfterMaxAttempts=true
+
+        Note over Retry: 3회 모두 500 Error
+        Retry-->>Test: HttpServerErrorException<br/>(원래 예외 그대로)
+
+        Note over Test: failAfterMaxAttempts는<br/>예외 기반에 적용되지 않음!
+    end
+
+    rect rgb(230, 240, 255)
+        Note over Retry: 결과 기반 재시도<br/>failAfterMaxAttempts=true
+
+        Note over Retry: 3회 모두 IN_PROGRESS
+        Retry-->>Test: MaxRetriesExceededException
+
+        Note over Test: 결과 기반에서만<br/>MaxRetriesExceededException 발생
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Retry: 결과 기반 재시도<br/>failAfterMaxAttempts=false (기본)
+
+        Note over Retry: 3회 모두 IN_PROGRESS
+        Retry-->>Test: {"status": "IN_PROGRESS"}<br/>(마지막 결과 그대로 반환)
+    end
+```
+
 ---
 
 ## RetryResultPredicateTest

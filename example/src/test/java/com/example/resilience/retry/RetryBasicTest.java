@@ -7,6 +7,7 @@ import io.github.resilience4j.retry.RetryConfig;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import io.github.resilience4j.retry.MaxRetriesExceededException;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -245,5 +246,69 @@ class RetryBasicTest extends ExampleTestBase {
 
         // Retry 메트릭: 재시도 시도 횟수는 2 (초기 호출 제외)
         assertThat(retry.getMetrics().getNumberOfFailedCallsWithRetryAttempt()).isEqualTo(1);
+    }
+
+    /**
+     * failAfterMaxAttempts는 결과 기반 재시도에만 적용되고, 예외 기반에는 적용되지 않는 것을 검증한다.
+     *
+     * 흐름:
+     *   DEAD 모드 + maxAttempts(3) + failAfterMaxAttempts=true + retryExceptions
+     *   → 3회 전부 예외 실패 → 원래 예외(HttpServerErrorException)가 그대로 전파
+     *   → failAfterMaxAttempts=true인데도 MaxRetriesExceededException이 아님
+     *
+     * 핵심:
+     *   failAfterMaxAttempts는 retryOnResult(결과 기반)에서만 동작한다.
+     *   예외 기반 재시도에서는 설정과 무관하게 항상 원래 예외가 전파된다.
+     *   이 구분을 모르면 "failAfterMaxAttempts=true로 했는데 왜 MaxRetriesExceededException이 안 나오지?"라는
+     *   혼란이 생긴다.
+     */
+    @Test
+    void failAfterMaxAttempts는_예외_기반_재시도에는_적용되지_않는다() {
+        paymentClient.setChaosMode("DEAD");
+
+        Retry retry = Retry.of("fail-exception-" + UUID.randomUUID(), RetryConfig.custom()
+                .maxAttempts(3)
+                .failAfterMaxAttempts(true) // true로 설정해도
+                .retryExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                .build());
+        TestLogger.attach(retry);
+
+        Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
+                () -> paymentClient.confirm("pk_fail_exc", "order_fail_exc", 10000));
+
+        // 예외 기반이므로 원래 예외가 그대로 나옴 (MaxRetriesExceededException 아님)
+        assertThatThrownBy(decorated::get)
+                .isInstanceOf(HttpServerErrorException.class)
+                .isNotInstanceOf(MaxRetriesExceededException.class);
+    }
+
+    /**
+     * failAfterMaxAttempts=true + retryOnResult 조합에서 MaxRetriesExceededException이 발생하는 것을 검증한다.
+     *
+     * 흐름:
+     *   maxAttempts(3) + failAfterMaxAttempts=true + retryOnResult(status=="IN_PROGRESS")
+     *   → 3회 모두 IN_PROGRESS 반환 → MaxRetriesExceededException 발생
+     *
+     * 핵심:
+     *   failAfterMaxAttempts=false(기본값)이면 마지막 결과가 그냥 반환된다.
+     *   failAfterMaxAttempts=true이면 MaxRetriesExceededException을 던져 "실패"를 명확히 한다.
+     *   CircuitBreaker와 조합 시, 이 예외가 CB 실패로 집계될 수 있으므로 주의가 필요하다.
+     */
+    @Test
+    void failAfterMaxAttempts_true_결과_기반에서_MaxRetriesExceededException이_발생한다() {
+        Retry retry = Retry.of("fail-result-" + UUID.randomUUID(),
+                RetryConfig.<Map<String, Object>>custom()
+                        .maxAttempts(3)
+                        .failAfterMaxAttempts(true)
+                        .retryOnResult(result -> "IN_PROGRESS".equals(result.get("status")))
+                        .build());
+        TestLogger.attach(retry);
+
+        Supplier<Map<String, Object>> decorated = Retry.decorateSupplier(retry,
+                () -> Map.of("status", "IN_PROGRESS", "paymentKey", "pk_stuck"));
+
+        // 결과 기반 + failAfterMaxAttempts=true → MaxRetriesExceededException
+        assertThatThrownBy(decorated::get)
+                .isInstanceOf(MaxRetriesExceededException.class);
     }
 }
