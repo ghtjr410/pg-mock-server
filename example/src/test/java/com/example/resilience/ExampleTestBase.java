@@ -1,6 +1,7 @@
 package com.example.resilience;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.TestInfo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.testcontainers.containers.GenericContainer;
@@ -53,6 +54,12 @@ public abstract class ExampleTestBase {
 
     @Autowired
     protected PaymentClient paymentClient;
+
+    @BeforeEach
+    void printTestHeader(TestInfo testInfo) {
+        String name = testInfo.getDisplayName().replace("_", " ");
+        System.out.printf("%n═══ %s ═══%n", name);
+    }
 
     @BeforeEach
     void resetMockServer() {
