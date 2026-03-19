@@ -143,6 +143,28 @@ sequenceDiagram
     Note over CB: failedCalls=2<br/>서킷이 의도치 않게 열릴 수 있음
 ```
 
+### CB OPEN 시 Bulkhead 슬롯 소비 → 즉시 반환
+
+```mermaid
+sequenceDiagram
+    participant Test as 테스트
+    participant BH as Bulkhead<br/>(maxConcurrent=3)
+    participant CB as CircuitBreaker<br/>(FORCED_OPEN)
+
+    Note over BH: availableSlots=3
+
+    loop 10회 호출
+        Test->>BH: call()
+        Note over BH: 슬롯 확보 (3→2)
+        BH->>CB: CB 진입
+        CB-->>BH: CallNotPermittedException<br/>(동기적, 마이크로초)
+        Note over BH: 슬롯 즉시 반환 (2→3)
+    end
+
+    Note over BH: availableSlots=3 (변함없음)
+    Note over BH: CB 거절이 동기적이므로<br/>슬롯 점유 시간 ≈ 0<br/>실질적 영향 없음
+```
+
 ### 핵심 원칙
 
 ```
@@ -150,6 +172,7 @@ Bulkhead(바깥) → CircuitBreaker(안쪽) → 서버
      ↑ 동시성 제한이 먼저
      ↑ 거절된 요청은 CB에 도달하지 않음
      ↑ CB 실패율이 오염되지 않음
+     ↑ CB OPEN 시 슬롯은 잡았다가 즉시 반환 (무해)
 
 CB(바깥) → Bulkhead(안쪽) → 서버  ← 잘못된 순서!
      ↑ BulkheadFullException이 CB 실패로 집계
