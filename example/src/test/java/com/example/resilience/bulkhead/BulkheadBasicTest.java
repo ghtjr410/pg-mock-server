@@ -313,4 +313,157 @@ class BulkheadBasicTest extends ExampleTestBase {
         assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(0);
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
+
+    /**
+     * 앞선 요청이 완료되면 슬롯이 반환되어 대기 중이던 요청이 통과하는 것을 검증한다.
+     *
+     * 흐름:
+     *   maxConcurrentCalls=2, maxWaitDuration=5s
+     *   1. 2건 동시 요청 (슬롯 점유) → SLOW 2s 응답 대기
+     *   2. 1초 후 3번째 요청 → 슬롯 없음 → 대기열 진입
+     *   3. 2초 후 앞선 요청 완료 → 슬롯 반환 → 3번째 요청 통과
+     *
+     * 핵심:
+     *   기존 테스트는 "전부 다 통과했다"만 확인한다.
+     *   이 테스트는 "슬롯 반환 시점과 후속 요청 통과 시점"을 명시적으로 증명한다.
+     *   Bulkhead의 핵심 메커니즘은 세마포어 기반 슬롯 풀이다.
+     */
+    @Test
+    void 슬롯_반환_후_대기_중이던_요청이_통과한다() throws Exception {
+        paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "2000", "slowMaxMs", "2000"));
+
+        Bulkhead bulkhead = Bulkhead.of("test-slot-return-" + UUID.randomUUID(), BulkheadConfig.custom()
+                .maxConcurrentCalls(2)
+                .maxWaitDuration(Duration.ofSeconds(5))
+                .build());
+        TestLogger.attach(bulkhead);
+
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        AtomicInteger successCount = new AtomicInteger(0);
+        List<Long> completionTimestamps = new CopyOnWriteArrayList<>();
+        long testStart = System.currentTimeMillis();
+
+        // Phase 1: 2건 동시 요청 → 슬롯 점유
+        CountDownLatch phase1Ready = new CountDownLatch(2);
+        CountDownLatch phase1Start = new CountDownLatch(1);
+        for (int i = 0; i < 2; i++) {
+            final int idx = i;
+            executor.submit(() -> {
+                phase1Ready.countDown();
+                try { phase1Start.await(); } catch (InterruptedException e) { return; }
+
+                String key = "pk_slot_" + idx;
+                Supplier<Map<String, Object>> decorated = Bulkhead.decorateSupplier(bulkhead,
+                        () -> paymentClient.confirm(key, "order_slot", 10000));
+                try {
+                    decorated.get();
+                    completionTimestamps.add(System.currentTimeMillis());
+                    successCount.incrementAndGet();
+                } catch (Exception ignored) {}
+            });
+        }
+        phase1Ready.await();
+        phase1Start.countDown();
+
+        // Phase 2: 1초 후 3번째 요청 → 슬롯 없음 → 대기열 진입
+        Thread.sleep(1000);
+        assertThat(bulkhead.getMetrics().getAvailableConcurrentCalls()).isEqualTo(0);
+
+        long thirdRequestStart = System.currentTimeMillis();
+        Future<?> thirdFuture = executor.submit(() -> {
+            String key = "pk_slot_2";
+            Supplier<Map<String, Object>> decorated = Bulkhead.decorateSupplier(bulkhead,
+                    () -> paymentClient.confirm(key, "order_slot_wait", 10000));
+            try {
+                decorated.get();
+                completionTimestamps.add(System.currentTimeMillis());
+                successCount.incrementAndGet();
+            } catch (Exception ignored) {}
+        });
+
+        thirdFuture.get(10, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // 3건 전부 성공
+        assertThat(successCount.get()).isEqualTo(3);
+
+        // 3번째 요청은 슬롯 대기 후 통과 → 앞선 2건보다 나중에 완료
+        // 앞선 2건: ~2초 후 완료, 3번째: 슬롯 반환(~2초) + SLOW(~2초) = ~3초 후 완료
+        long thirdRequestElapsed = completionTimestamps.get(2) - thirdRequestStart;
+        assertThat(thirdRequestElapsed).isGreaterThanOrEqualTo(2500L); // 슬롯 대기 ~1초 + SLOW 2초
+    }
+
+    /**
+     * CB(바깥) → Bulkhead(안쪽) 잘못된 순서에서 Bulkhead 거절이 CB 실패로 집계되는 것을 검증한다.
+     *
+     * 흐름:
+     *   CB(바깥) → Bulkhead(안쪽) → client
+     *   → Bulkhead에서 BulkheadFullException 발생
+     *   → CB가 이 예외를 실패로 집계 → 실패율 상승 → OPEN 위험
+     *
+     * 핵심:
+     *   올바른 순서(Bulkhead 바깥 → CB 안쪽)와 정반대의 결과가 나온다.
+     *   서버는 정상인데 동시 요청 폭주로 서킷이 열리는 오작동이 발생한다.
+     *   실무에서 Spring AOP aspect order를 잘못 잡으면 이 문제가 발생한다.
+     */
+    @Test
+    void CB_바깥_Bulkhead_안쪽이면_거절이_CB_실패로_집계된다() throws Exception {
+        paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "3000", "slowMaxMs", "3000"));
+
+        Bulkhead bulkhead = Bulkhead.of("test-wrong-" + UUID.randomUUID(), BulkheadConfig.custom()
+                .maxConcurrentCalls(2)
+                .maxWaitDuration(Duration.ZERO)
+                .build());
+        TestLogger.attach(bulkhead);
+
+        CircuitBreaker cb = CircuitBreaker.of("test-wrong-cb-" + UUID.randomUUID(),
+                CircuitBreakerConfig.custom()
+                        .failureRateThreshold(50)
+                        .minimumNumberOfCalls(4)
+                        .slidingWindowSize(4)
+                        // BulkheadFullException은 RuntimeException이므로 기본 설정으로 실패 집계됨
+                        .build());
+        TestLogger.attach(cb);
+
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+        CountDownLatch readyLatch = new CountDownLatch(4);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        AtomicInteger rejectedCount = new AtomicInteger(0);
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int i = 0; i < 4; i++) {
+            final int idx = i;
+            futures.add(executor.submit(() -> {
+                readyLatch.countDown();
+                try { startLatch.await(); } catch (InterruptedException e) { return; }
+
+                String key = "pk_wrong_bh_" + idx;
+                // 잘못된 순서: CB(바깥) → Bulkhead(안쪽) → client
+                Supplier<Map<String, Object>> bulkheadDecorated = Bulkhead.decorateSupplier(bulkhead,
+                        () -> paymentClient.confirm(key, "order_wrong_bh", 10000));
+                Supplier<Map<String, Object>> cbDecorated = CircuitBreaker.decorateSupplier(cb, bulkheadDecorated);
+
+                try {
+                    cbDecorated.get();
+                } catch (BulkheadFullException e) {
+                    rejectedCount.incrementAndGet();
+                } catch (Exception ignored) {}
+            }));
+        }
+
+        readyLatch.await();
+        startLatch.countDown();
+
+        for (Future<?> f : futures) {
+            try { f.get(15, TimeUnit.SECONDS); } catch (Exception ignored) {}
+        }
+        executor.shutdown();
+
+        // 2건 Bulkhead 거절 발생
+        assertThat(rejectedCount.get()).isEqualTo(2);
+
+        // 잘못된 순서: BulkheadFullException이 CB 실패로 집계됨
+        TestLogger.summary(cb);
+        assertThat(cb.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
+    }
 }
