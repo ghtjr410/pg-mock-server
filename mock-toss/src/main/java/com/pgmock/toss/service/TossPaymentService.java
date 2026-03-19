@@ -21,6 +21,10 @@ public class TossPaymentService {
         this.paymentStore = paymentStore;
     }
 
+    public void clearIdempotencyCache() {
+        idempotencyCache.clear();
+    }
+
     public synchronized ResponseEntity<?> confirm(String paymentKey, String orderId, long amount, String idempotencyKey) {
         if (paymentKey == null || orderId == null || amount <= 0) {
             return ResponseEntity.badRequest().body(

@@ -1,5 +1,6 @@
 package com.pgmock.toss.controller;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -10,8 +11,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.Base64;
 
 import static org.hamcrest.Matchers.matchesPattern;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -23,6 +23,11 @@ class TossPaymentControllerTest {
     private MockMvc mockMvc;
 
     private static final String AUTH_HEADER = "Basic " + Base64.getEncoder().encodeToString("test_sk_xxxx:".getBytes());
+
+    @BeforeEach
+    void setUp() throws Exception {
+        mockMvc.perform(delete("/test/reset"));
+    }
 
     @Test
     void confirm_정상승인_토스스펙필드() throws Exception {
@@ -354,5 +359,46 @@ class TossPaymentControllerTest {
                                 """))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("NOT_CANCELABLE_AMOUNT"));
+    }
+
+    @Test
+    void 테스트리셋_결제저장소_초기화() throws Exception {
+        // 결제 1건 생성
+        mockMvc.perform(post("/v1/payments/confirm")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"paymentKey":"tpk_reset","orderId":"ORDER-RESET","amount":5000}
+                        """))
+                .andExpect(status().isOk());
+
+        // 리셋
+        mockMvc.perform(delete("/test/reset"))
+                .andExpect(status().isNoContent());
+
+        // 조회 시 404
+        mockMvc.perform(get("/v1/payments/tpk_reset")
+                        .header("Authorization", AUTH_HEADER))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 테스트리셋_카오스모드_초기화() throws Exception {
+        // DEAD 모드 설정
+        mockMvc.perform(put("/chaos/mode?mode=DEAD"))
+                .andExpect(status().isOk());
+
+        // 리셋
+        mockMvc.perform(delete("/test/reset"))
+                .andExpect(status().isNoContent());
+
+        // NORMAL로 복구 확인
+        mockMvc.perform(get("/chaos/mode"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("NORMAL"))
+                .andExpect(jsonPath("$.slowMinMs").value(3000))
+                .andExpect(jsonPath("$.slowMaxMs").value(10000))
+                .andExpect(jsonPath("$.partialFailureRate").value(50))
+                .andExpect(jsonPath("$.affectReadApis").value(false));
     }
 }

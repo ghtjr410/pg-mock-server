@@ -52,4 +52,12 @@ public class ChaosProperties {
     public void setAffectReadApis(boolean affectReadApis) {
         this.affectReadApis = affectReadApis;
     }
+
+    public void reset() {
+        this.mode = ChaosMode.NORMAL;
+        this.slowMinMs = 3000;
+        this.slowMaxMs = 10000;
+        this.partialFailureRate = 50;
+        this.affectReadApis = false;
+    }
 }

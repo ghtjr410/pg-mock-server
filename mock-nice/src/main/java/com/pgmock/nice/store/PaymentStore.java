@@ -18,6 +18,10 @@ public class PaymentStore {
         return store.get(tid);
     }
 
+    public void clear() {
+        store.clear();
+    }
+
     public Payment findByOrderId(String orderId) {
         return store.values().stream()
                 .filter(p -> p.getOrderId().equals(orderId))

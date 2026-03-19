@@ -39,7 +39,7 @@ public class ChaosInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         String path = request.getRequestURI();
-        if (path.startsWith("/chaos")) {
+        if (path.startsWith("/chaos") || path.startsWith("/test")) {
             return true;
         }
 

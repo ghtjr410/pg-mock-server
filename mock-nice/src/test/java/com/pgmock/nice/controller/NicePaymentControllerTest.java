@@ -1,5 +1,6 @@
 package com.pgmock.nice.controller;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -9,8 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Base64;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -20,6 +20,11 @@ class NicePaymentControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        mockMvc.perform(delete("/test/reset"));
+    }
 
     private static final String AUTH_HEADER = "Basic " +
             Base64.getEncoder().encodeToString("testClientKey:testSecretKey".getBytes());
@@ -292,5 +297,40 @@ class NicePaymentControllerTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.resultCode").value("2003"));
+    }
+
+    @Test
+    void 테스트리셋_결제저장소_초기화() throws Exception {
+        mockMvc.perform(post("/v1/payments/nicuntct_reset")
+                .header("Authorization", AUTH_HEADER)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"amount":5000}
+                        """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/test/reset"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/v1/payments/nicuntct_reset")
+                        .header("Authorization", AUTH_HEADER))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 테스트리셋_카오스모드_초기화() throws Exception {
+        mockMvc.perform(put("/chaos/mode?mode=DEAD"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/test/reset"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/chaos/mode"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("NORMAL"))
+                .andExpect(jsonPath("$.slowMinMs").value(3000))
+                .andExpect(jsonPath("$.slowMaxMs").value(10000))
+                .andExpect(jsonPath("$.partialFailureRate").value(50))
+                .andExpect(jsonPath("$.affectReadApis").value(false));
     }
 }
