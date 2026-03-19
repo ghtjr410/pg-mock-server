@@ -4,7 +4,8 @@ import com.example.resilience.ExampleTestBase;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.DisplayNameGeneration;
+import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -20,6 +21,7 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class HalfOpenBehaviorTest extends ExampleTestBase {
 
     private CircuitBreaker openCircuit(CircuitBreakerConfig config) {
@@ -35,9 +37,20 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
         return cb;
     }
 
+    /**
+     * HALF_OPEN에서 permittedNumberOfCalls를 초과하는 요청은 거절되는 것을 검증한다.
+     *
+     * 흐름:
+     *   OPEN → waitDuration 후 HALF_OPEN 전환
+     *   → SLOW 모드에서 permitted 3건을 병렬로 시작 (슬롯 점유)
+     *   → 4번째 요청 → CallNotPermittedException 발생
+     *
+     * 핵심:
+     *   HALF_OPEN은 제한된 수의 요청만 통과시켜 서버 복구 여부를 탐색한다.
+     *   초과 요청은 즉시 거절하여 불안정한 서버에 과부하를 주지 않는다.
+     */
     @Test
-    @DisplayName("3-1: permittedNumberOfCalls 초과 요청은 거절")
-    void halfOpen_exceedPermittedCalls_rejected() throws Exception {
+    void HALF_OPEN에서_permittedNumberOfCalls_초과_요청은_거절된다() throws Exception {
         CircuitBreaker cb = openCircuit(CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)
                 .minimumNumberOfCalls(5)
@@ -86,9 +99,19 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
         executor.shutdown();
     }
 
+    /**
+     * maxWaitDurationInHalfOpenState 기본값(0)이면 무한 대기하는 것을 검증한다.
+     *
+     * 흐름:
+     *   OPEN → HALF_OPEN 전환 → SLOW(5s) 호출 1건 시작
+     *   → 3초 후에도 여전히 HALF_OPEN (maxWait=0 → 무한 대기)
+     *
+     * 문제:
+     *   기본값 0은 "무한 대기"를 의미한다. permitted 호출이 느리면
+     *   HALF_OPEN 상태에서 빠져나오지 못해 새 요청이 모두 거절된다.
+     */
     @Test
-    @DisplayName("3-2: maxWaitDurationInHalfOpenState 기본값 0 → 무한 대기")
-    void halfOpen_maxWaitDefault_waitsForever() throws Exception {
+    void maxWaitDurationInHalfOpenState_기본값_0이면_무한_대기() throws Exception {
         CircuitBreaker cb = openCircuit(CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)
                 .minimumNumberOfCalls(5)
@@ -127,9 +150,19 @@ class HalfOpenBehaviorTest extends ExampleTestBase {
         executor.shutdown();
     }
 
+    /**
+     * maxWaitDurationInHalfOpenState를 설정하면 시간 초과 시 OPEN으로 복귀하는 것을 검증한다.
+     *
+     * 흐름:
+     *   OPEN → 수동 HALF_OPEN 전환 → SLOW(10s) 호출 3건 시작
+     *   → maxWaitDuration(2s) 초과 → 강제 OPEN 복귀
+     *
+     * 해결:
+     *   maxWaitDurationInHalfOpenState를 설정하면 permitted 호출이 느려도
+     *   지정 시간 후 강제로 OPEN으로 복귀하여 무한 대기를 방지한다.
+     */
     @Test
-    @DisplayName("3-3: maxWaitDurationInHalfOpenState 설정 → 시간 초과 시 OPEN 복귀")
-    void halfOpen_maxWaitSet_forcesOpenAfterTimeout() throws Exception {
+    void maxWaitDurationInHalfOpenState_설정시_시간_초과하면_OPEN_복귀() throws Exception {
         // waitDurationInOpenState를 길게 설정: maxWait→OPEN 후 재전환 방지
         CircuitBreaker cb = openCircuit(CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)

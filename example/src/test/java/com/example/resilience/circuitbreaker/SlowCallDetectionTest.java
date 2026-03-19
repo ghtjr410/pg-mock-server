@@ -3,7 +3,8 @@ package com.example.resilience.circuitbreaker;
 import com.example.resilience.ExampleTestBase;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.DisplayNameGeneration;
+import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -15,11 +16,22 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class SlowCallDetectionTest extends ExampleTestBase {
 
+    /**
+     * 모든 호출이 느릴 때 slowCallRate로 서킷이 OPEN되는 기본 동작을 검증한다.
+     *
+     * 흐름:
+     *   SLOW 2~2.5s 설정 + threshold 1s → 전부 slowCall
+     *   → slowCallRate 100% > slowCallRateThreshold(50%) → OPEN
+     *
+     * 핵심:
+     *   slowCall 감지는 failureRate와 별도로 동작한다.
+     *   failureRateThreshold를 100%로 설정해도 slowCallRate로 서킷이 열릴 수 있다.
+     */
     @Test
-    @DisplayName("2-1: slowCall 기본 동작 — SLOW 전부 → slowCallRate 100% → OPEN")
-    void slowCall_allSlow_opensCircuit() {
+    void SLOW_전부이면_slowCallRate_100퍼센트로_OPEN() {
         // SLOW 2~2.5s, threshold 1s → 전부 slowCall
         paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "2000", "slowMaxMs", "2500"));
         paymentClient.configure(
@@ -48,9 +60,21 @@ class SlowCallDetectionTest extends ExampleTestBase {
         assertThat(cb.getMetrics().getSlowCallRate()).isGreaterThanOrEqualTo(50.0f);
     }
 
+    /**
+     * slowCall은 요청을 끊지 않으며, 느린 성공도 장애의 전조로 집계되는 것을 검증한다.
+     *
+     * 흐름:
+     *   SLOW 2s + threshold 1s + readTimeout 5s → 3건 모두 느리지만 정상 응답
+     *   → 사용자에게는 성공이지만 서킷에는 slowCall로 집계됨
+     *   → slowCallRate 100% > 80% → OPEN
+     *
+     * 핵심:
+     *   slowCall은 timeout과 다르게 요청을 끊지 않는다.
+     *   응답을 정상적으로 받으면서도 "이 서버는 느려지고 있다"는 신호를 집계한다.
+     *   느린 성공이 반복되면 곧 타임아웃이 발생할 전조이므로 미리 서킷을 연다.
+     */
     @Test
-    @DisplayName("2-2: slowCall은 요청을 끊지 않는다 — 느린 성공도 장애의 전조")
-    void slowCall_doesNotCutRequest_slowSuccessIsWarning() {
+    void slowCall은_요청을_끊지_않고_느린_성공도_장애_전조로_집계한다() {
         // SLOW 2s, threshold 1s, readTimeout 5s
         paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "2000", "slowMaxMs", "2000"));
         paymentClient.configure(
@@ -85,9 +109,20 @@ class SlowCallDetectionTest extends ExampleTestBase {
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 
+    /**
+     * slowCall과 failure가 복합적으로 발생할 때, 둘 중 하나라도 threshold를 넘으면 OPEN이 되는 것을 검증한다.
+     *
+     * 흐름:
+     *   SLOW 2s → 모든 호출이 느림 + 일부는 에러 트리거로 500 응답
+     *   → failureRate: 50% (2/4) < 80% → 이것만으로는 안 열림
+     *   → slowCallRate: 100% (4/4) > 50% → 이걸로 열림
+     *
+     * 핵심:
+     *   failureRate와 slowCallRate는 독립적으로 평가된다.
+     *   둘 중 하나라도 threshold를 넘으면 서킷이 열린다.
+     */
     @Test
-    @DisplayName("2-3: slowCall + failure 복합 — 둘 중 하나라도 threshold 넘으면 OPEN")
-    void slowCall_plusFailure_composite() {
+    void slowCall과_failure_복합시_둘_중_하나라도_threshold_넘으면_OPEN() {
         // SLOW 2s → 모든 호출이 느림. 에러 트리거로 일부 실패 추가.
         paymentClient.setChaosMode("SLOW", Map.of("slowMinMs", "2000", "slowMaxMs", "2000"));
         paymentClient.configure(

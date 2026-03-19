@@ -3,7 +3,8 @@ package com.example.resilience.circuitbreaker;
 import com.example.resilience.ExampleTestBase;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.DisplayNameGeneration;
+import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -15,11 +16,22 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class CircuitBreakerRecoveryTest extends ExampleTestBase {
 
+    /**
+     * HALF_OPEN 상태에서 성공 응답을 받으면 CLOSED로 복구되는지 검증한다.
+     *
+     * 흐름:
+     *   1. DEAD 모드 → 5건 실패 → OPEN 전환
+     *   2. NORMAL 모드로 전환 + waitDuration(1s) 대기 → HALF_OPEN 자동 전환
+     *   3. HALF_OPEN에서 permittedNumberOfCalls(3)건 성공 → CLOSED 복구
+     *
+     * 핵심:
+     *   서킷 복구의 핵심 경로. 장애가 해소되면 HALF_OPEN을 거쳐 정상으로 돌아온다.
+     */
     @Test
-    @DisplayName("HALF_OPEN → 성공 → CLOSED 복구")
-    void halfOpen_success_transitionToClosed() throws InterruptedException {
+    void HALF_OPEN에서_성공하면_CLOSED로_복구된다() throws InterruptedException {
         CircuitBreaker cb = CircuitBreaker.of("recovery-success-" + UUID.randomUUID(),
                 CircuitBreakerConfig.custom()
                         .failureRateThreshold(50)
@@ -56,9 +68,20 @@ class CircuitBreakerRecoveryTest extends ExampleTestBase {
         assertThat(cb.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
 
+    /**
+     * HALF_OPEN 상태에서 다시 실패하면 OPEN으로 재진입하는지 검증한다.
+     *
+     * 흐름:
+     *   1. DEAD 모드 → 5건 실패 → OPEN 전환
+     *   2. waitDuration(1s) 대기 → HALF_OPEN 자동 전환 (DEAD 유지)
+     *   3. HALF_OPEN에서 3건 실패 → OPEN 재진입
+     *
+     * 핵심:
+     *   장애가 계속되면 HALF_OPEN에서 다시 OPEN으로 돌아간다.
+     *   서킷이 장애 서버에 트래픽을 보내지 않도록 보호하는 메커니즘이다.
+     */
     @Test
-    @DisplayName("HALF_OPEN → 실패 → OPEN 재진입")
-    void halfOpen_failure_transitionBackToOpen() throws InterruptedException {
+    void HALF_OPEN에서_실패하면_OPEN으로_재진입한다() throws InterruptedException {
         CircuitBreaker cb = CircuitBreaker.of("recovery-fail-" + UUID.randomUUID(),
                 CircuitBreakerConfig.custom()
                         .failureRateThreshold(50)
