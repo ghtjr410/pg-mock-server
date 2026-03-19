@@ -40,15 +40,19 @@ sequenceDiagram
     participant Test as 테스트
     participant CB as CircuitBreaker<br/>(CLOSED)
 
-    Note over CB: slidingWindowSize=10<br/>failureRateThreshold=50%
+    Note over CB: slidingWindowSize=100<br/>failureRateThreshold=50%
 
-    loop 7회 성공 + 3회 실패
+    Note over Test: PARTIAL_FAILURE 30%로<br/>100건 요청
+
+    loop 100회 호출 (~70회 성공 + ~30회 실패)
         Test->>CB: call()
         CB->>CB: 결과 기록
     end
 
-    Note over CB: failureRate=30% < 50%
+    Note over CB: failureRate≈30% < 50%
     Note over CB: CLOSED 유지
+
+    Note over Test: slidingWindowSize=100이면<br/>30%±~4.6% 분산<br/>50%를 넘을 확률 ≈ 0
 ```
 
 ---

@@ -69,16 +69,27 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
      * 부분 장애율 30%일 때 서킷이 CLOSED를 유지하는지 검증한다.
      *
      * 흐름:
-     *   PARTIAL_FAILURE 30% 설정 → 100건 요청 → 약 30% 실패
+     *   PARTIAL_FAILURE 30% 설정 → slidingWindowSize=100 → 100건 요청 → 약 30% 실패
      *   → failureRateThreshold(50%) 미만 → CLOSED 유지
      *
      * 핵심:
      *   실패율이 threshold 미만이면 서킷은 열리지 않는다.
+     *
+     * 설계:
+     *   확률 기반 테스트에서는 통계적 마진이 충분해야 한다.
+     *   slidingWindowSize=100이면 실패율 분산이 작아져(30%±~4.6%)
+     *   50% threshold를 우연히 넘을 확률이 사실상 0이다.
      */
     @Test
     void PARTIAL_FAILURE_30퍼센트이면_실패율_50퍼센트_미만으로_CLOSED_유지() {
         paymentClient.setChaosMode("PARTIAL_FAILURE", Map.of("partialFailureRate", "30"));
-        CircuitBreaker cb = createCircuitBreaker();
+
+        CircuitBreaker cb = CircuitBreaker.of("pf30-" + UUID.randomUUID(), CircuitBreakerConfig.custom()
+                .failureRateThreshold(50)
+                .minimumNumberOfCalls(100)
+                .slidingWindowSize(100) // 윈도우를 크게 → 확률적 편차 억제
+                .recordExceptions(HttpServerErrorException.class, ResourceAccessException.class)
+                .build());
         TestLogger.attach(cb);
 
         for (int i = 0; i < 100; i++) {
@@ -99,30 +110,34 @@ class CircuitBreakerBasicTest extends ExampleTestBase {
      * 부분 장애율 90%일 때 서킷이 OPEN으로 전환되는지 검증한다.
      *
      * 흐름:
-     *   PARTIAL_FAILURE 90% 설정 → 100건 요청 → 약 90% 실패
+     *   PARTIAL_FAILURE 90% 설정 → slidingWindowSize=100 → 100건 요청 → 약 90% 실패
      *   → failureRateThreshold(50%) 초과 → OPEN 전환
      *
      * 주의:
      *   PARTIAL_FAILURE는 4xx/5xx를 혼합 반환하므로 HttpClientErrorException도
      *   recordExceptions에 포함해야 정확한 장애율을 집계할 수 있다.
+     *
+     * 설계:
+     *   slidingWindowSize=100이면 90% 실패율의 분산이 작아져(90%±~3%)
+     *   50% threshold를 못 넘을 확률이 사실상 0이다.
      */
     @Test
     void PARTIAL_FAILURE_90퍼센트이면_실패율_50퍼센트_초과로_OPEN_전환() {
         paymentClient.setChaosMode("PARTIAL_FAILURE", Map.of("partialFailureRate", "90"));
 
         // PARTIAL_FAILURE는 4xx/5xx 혼합 반환 → 둘 다 recordExceptions에 포함해야 정확한 장애율 집계
-        CircuitBreaker cb = CircuitBreaker.of("pf70-" + UUID.randomUUID(), CircuitBreakerConfig.custom()
+        CircuitBreaker cb = CircuitBreaker.of("pf90-" + UUID.randomUUID(), CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)
-                .minimumNumberOfCalls(10)
-                .slidingWindowSize(10)
+                .minimumNumberOfCalls(100)
+                .slidingWindowSize(100) // 윈도우를 크게 → 확률적 편차 억제
                 .recordExceptions(HttpServerErrorException.class, HttpClientErrorException.class, ResourceAccessException.class)
                 .build());
         TestLogger.attach(cb);
 
         for (int i = 0; i < 100; i++) {
-            String key = "pk_pf70_" + i;
+            String key = "pk_pf90_" + i;
             Supplier<Map<String, Object>> decorated = CircuitBreaker.decorateSupplier(cb,
-                    () -> paymentClient.confirm(key, "order_pf70", 10000));
+                    () -> paymentClient.confirm(key, "order_pf90", 10000));
             try {
                 decorated.get();
             } catch (HttpServerErrorException | HttpClientErrorException | ResourceAccessException | CallNotPermittedException ignored) {
